@@ -1,0 +1,12 @@
+apiVersion: v2
+name: rhoai-maas
+description: Deploy and configure Models-as-a-Service (MaaS) on Red Hat OpenShift AI 3.3
+version: 0.1.0
+appVersion: "3.3.0"
+type: application
+keywords:
+  - rhoai
+  - maas
+  - llm
+  - kuadrant
+  - openshift

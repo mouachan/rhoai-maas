@@ -1,0 +1,49 @@
+{{- if .Values.model.enabled }}
+apiVersion: serving.kserve.io/v1alpha1
+kind: LLMInferenceService
+metadata:
+  name: {{ .Values.model.name }}
+  namespace: {{ .Values.modelNamespace }}
+  annotations:
+    alpha.maas.opendatahub.io/tiers: {{ .Values.tiers | toJson | quote }}
+    security.opendatahub.io/enable-auth: "true"
+    opendatahub.io/genai-use-case: {{ .Values.model.useCase }}
+    opendatahub.io/hardware-profile-name: {{ .Values.model.hardwareProfile.name }}
+    opendatahub.io/hardware-profile-namespace: {{ .Values.model.hardwareProfile.namespace }}
+    opendatahub.io/model-type: {{ .Values.model.modelType }}
+    openshift.io/display-name: {{ .Values.model.displayName | quote }}
+    {{- if .Values.connectionSecret }}
+    opendatahub.io/connections: {{ .Values.connectionSecret }}
+    {{- end }}
+  labels:
+    opendatahub.io/dashboard: "true"
+    opendatahub.io/genai-asset: "true"
+    {{- include "rhoai-maas.labels" . | nindent 4 }}
+spec:
+  model:
+    name: {{ .Values.model.name }}
+    uri: {{ .Values.model.uri }}
+  replicas: {{ .Values.model.replicas }}
+  router:
+    gateway:
+      refs:
+        - name: {{ .Values.gateway.name }}
+          namespace: {{ .Values.gateway.namespace }}
+    route: {}
+    scheduler: {}
+  template:
+    containers:
+      - name: main
+        env:
+          - name: VLLM_ADDITIONAL_ARGS
+            value: {{ .Values.model.vllmArgs | quote }}
+        resources:
+          limits:
+            cpu: {{ .Values.model.resources.cpu | quote }}
+            memory: {{ .Values.model.resources.memory }}
+            nvidia.com/gpu: {{ .Values.model.resources.gpu | quote }}
+          requests:
+            cpu: {{ .Values.model.resources.cpu | quote }}
+            memory: {{ .Values.model.resources.memory }}
+            nvidia.com/gpu: {{ .Values.model.resources.gpu | quote }}
+{{- end }}

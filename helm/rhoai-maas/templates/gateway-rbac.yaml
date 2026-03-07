@@ -1,0 +1,35 @@
+---
+# ClusterRole to allow the dashboard ServiceAccount to read Gateway resources.
+# Required for gen-ai-ui (BFF) autodiscovery of the MaaS API URL.
+# Without this, the BFF cannot read the Gateway listener hostname and
+# the MaaS client URL remains empty.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: maas-gateway-reader
+  labels:
+    {{- include "rhoai-maas.labels" . | nindent 4 }}
+rules:
+  - apiGroups:
+      - gateway.networking.k8s.io
+    resources:
+      - gateways
+    verbs:
+      - get
+      - list
+      - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: maas-dashboard-gateway-reader
+  labels:
+    {{- include "rhoai-maas.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: maas-gateway-reader
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.dashboard.serviceAccountName }}
+    namespace: {{ .Values.dashboard.namespace }}

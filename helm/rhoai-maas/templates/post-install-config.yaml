@@ -1,0 +1,128 @@
+---
+# ServiceAccount for the post-install configuration Job
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: maas-config-job
+  namespace: {{ .Values.dashboard.namespace }}
+  labels:
+    {{- include "rhoai-maas.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: maas-config-job
+  labels:
+    {{- include "rhoai-maas.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+rules:
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["gateways"]
+    verbs: ["get", "patch"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "create", "patch"]
+  - apiGroups: ["opendatahub.io"]
+    resources: ["odhdashboardconfigs"]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: maas-config-job
+  labels:
+    {{- include "rhoai-maas.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: maas-config-job
+subjects:
+  - kind: ServiceAccount
+    name: maas-config-job
+    namespace: {{ .Values.dashboard.namespace }}
+---
+# Post-install Job that patches the Gateway listener hostname,
+# copies the wildcard TLS cert, labels the Gateway, and enables
+# modelAsService in the dashboard config.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: maas-post-install-config
+  namespace: {{ .Values.dashboard.namespace }}
+  labels:
+    {{- include "rhoai-maas.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "1"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 3
+  template:
+    spec:
+      serviceAccountName: maas-config-job
+      restartPolicy: Never
+      containers:
+        - name: config
+          image: registry.redhat.io/openshift4/ose-cli-rhel9:latest
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -euo pipefail
+
+              GATEWAY_NAME="{{ .Values.gateway.name }}"
+              GATEWAY_NS="{{ .Values.gateway.namespace }}"
+              HOSTNAME="{{ include "rhoai-maas.gatewayHostname" . }}"
+              TLS_SECRET="{{ .Values.gateway.tlsSecretName }}"
+              DASHBOARD_NS="{{ .Values.dashboard.namespace }}"
+
+              echo "=== Step 1: Copy wildcard TLS cert ==="
+              {{- if .Values.gateway.copyWildcardCert }}
+              SRC_SECRET="{{ .Values.gateway.wildcardCertSecretName }}"
+              # Get the cert and key from source secret
+              CRT=$(oc get secret "$SRC_SECRET" -n "$GATEWAY_NS" -o jsonpath='{.data.tls\.crt}')
+              KEY=$(oc get secret "$SRC_SECRET" -n "$GATEWAY_NS" -o jsonpath='{.data.tls\.key}')
+              # Create or update the TLS secret
+              cat <<EOSECRET | oc apply -f -
+              apiVersion: v1
+              kind: Secret
+              metadata:
+                name: $TLS_SECRET
+                namespace: $GATEWAY_NS
+              type: kubernetes.io/tls
+              data:
+                tls.crt: $CRT
+                tls.key: $KEY
+              EOSECRET
+              echo "TLS secret $TLS_SECRET created/updated"
+              {{- end }}
+
+              echo "=== Step 2: Patch Gateway listener with hostname ==="
+              oc patch gateway "$GATEWAY_NAME" -n "$GATEWAY_NS" --type='json' -p="[
+                {\"op\":\"replace\",\"path\":\"/spec/listeners/0/hostname\",\"value\":\"$HOSTNAME\"},
+                {\"op\":\"replace\",\"path\":\"/spec/listeners/0/tls/certificateRefs/0/name\",\"value\":\"$TLS_SECRET\"}
+              ]"
+              echo "Gateway listener patched with hostname=$HOSTNAME"
+
+              echo "=== Step 3: Label Gateway to prevent conflicting AuthPolicy ==="
+              oc label gateway "$GATEWAY_NAME" -n "$GATEWAY_NS" \
+                opendatahub.io/managed=false --overwrite
+              echo "Gateway labeled opendatahub.io/managed=false"
+
+              echo "=== Step 4: Enable modelAsService in dashboard config ==="
+              oc patch odhdashboardconfig odh-dashboard-config -n "$DASHBOARD_NS" \
+                --type='merge' -p='{"spec":{"dashboardConfig":{"modelAsService":true}}}'
+              echo "Dashboard modelAsService enabled"
+
+              echo "=== Configuration complete ==="

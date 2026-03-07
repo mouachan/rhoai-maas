@@ -1,0 +1,54 @@
+# -- Cluster apps domain (e.g. apps.cluster-xxx.sandbox.opentlc.com)
+clusterDomain: ""
+
+# -- Model namespace where the LLMInferenceService will be deployed
+modelNamespace: llm
+
+# -- Gateway configuration
+gateway:
+  name: maas-default-gateway
+  namespace: openshift-ingress
+  # -- Hostname prefix for the gateway listener (full hostname = <prefix>.<clusterDomain>)
+  hostnamePrefix: maas
+  # -- Name of the TLS secret to use for the gateway listener
+  tlsSecretName: maas-gateway-wildcard-tls
+  # -- If true, copy the wildcard cert from cert-manager-ingress-cert to the gateway namespace
+  copyWildcardCert: true
+  # -- Source secret name for the wildcard cert (in gateway.namespace)
+  wildcardCertSecretName: cert-manager-ingress-cert
+
+# -- Dashboard configuration
+dashboard:
+  namespace: redhat-ods-applications
+  serviceAccountName: rhods-dashboard
+
+# -- LLMInferenceService configuration
+model:
+  enabled: true
+  name: redhataillama-4-scout-17b-16e-instruct-quantizedw4a16
+  displayName: "RedHatAI/Llama-4-Scout-17B-16E-Instruct-quantized.w4a16"
+  uri: "oci://registry.redhat.io/rhelai1/modelcar-llama-4-scout-17b-16e-instruct-quantized-w4a16:1.5"
+  useCase: chat
+  modelType: generative
+  # -- Hardware profile
+  hardwareProfile:
+    name: nvidia-l40-48gb
+    namespace: redhat-ods-applications
+  # -- Resource requests/limits
+  resources:
+    cpu: "8"
+    memory: 32Gi
+    gpu: "4"
+  # -- vLLM arguments
+  vllmArgs: "--max-model-len 8192 --gpu-memory-utilization 0.95 --enforce-eager --enable-prefix-caching --dtype auto --enable-auto-tool-choice --tool-call-parser pythonic --tensor-parallel-size 4"
+  # -- Replicas
+  replicas: 1
+
+# -- MaaS tiers to assign to the model
+tiers:
+  - free
+  - premium
+  - enterprise
+
+# -- Connection secret for the model (optional, set to "" to skip)
+connectionSecret: ""
