@@ -337,6 +337,154 @@ If the BFF logs show TLS errors when connecting to the Gateway:
 2. Verify the cert covers the hostname: `oc get secret maas-gateway-wildcard-tls -n openshift-ingress -o jsonpath='{.data.tls\.crt}' | base64 -d | openssl x509 -noout -ext subjectAltName`
 3. The cert should have a SAN matching `*.apps.cluster-xxx...`
 
+## Monitoring with Grafana
+
+### Metrics Architecture
+
+When deploying a model via `LLMInferenceService` (llm-d), RHOAI automatically creates:
+
+- A **PodMonitor** `kserve-llm-isvc-vllm-engine` that scrapes the vLLM engine pods on port 8000 (HTTPS)
+- A **ServiceMonitor** `kserve-llm-isvc-scheduler` that scrapes the kserve router/scheduler
+
+The PodMonitor applies a `metricRelabeling` that renames all scraped metrics with a `kserve_` prefix:
+
+| vLLM native metric | In Prometheus |
+|---------------------|---------------|
+| `vllm:time_to_first_token_seconds` | `kserve_vllm:time_to_first_token_seconds` |
+| `vllm:e2e_request_latency_seconds` | `kserve_vllm:e2e_request_latency_seconds` |
+| `vllm:request_time_per_output_token_seconds` | `kserve_vllm:request_time_per_output_token_seconds` |
+| `vllm:inter_token_latency_seconds` | `kserve_vllm:inter_token_latency_seconds` |
+| `vllm:generation_tokens_total` | `kserve_vllm:generation_tokens_total` |
+
+This means **an existing vLLM Grafana dashboard (querying `vllm:*`) will NOT show llm-d metrics**. You need a separate dashboard that queries `kserve_vllm:*`.
+
+### Prerequisites
+
+1. **User Workload Monitoring** must be enabled on the cluster (provides `prometheus-user-workload` in `openshift-user-workload-monitoring`)
+2. **Grafana Operator v5** installed in the `user-grafana` namespace
+3. A **Grafana instance** with label `dashboards: grafana`
+4. A **GrafanaDatasource** pointing to Thanos Querier (`https://thanos-querier.openshift-monitoring.svc.cluster.local:9091`) with a ServiceAccount token that has the `cluster-monitoring-view` ClusterRole
+
+### Deploy the llm-d Grafana Dashboard
+
+```bash
+oc apply -f grafana/llm-d-dashboard.yaml
+```
+
+This creates a `GrafanaDashboard` CR with panels for:
+
+| Panel | Metric | Description |
+|-------|--------|-------------|
+| Time to First Token (TTFT) | `kserve_vllm:time_to_first_token_seconds` | Time from request received to first token generated (p50/p95/p99) |
+| Time Per Output Token (TPOT) | `kserve_vllm:request_time_per_output_token_seconds` | Average time to generate each output token (p50/p95/p99) |
+| E2E Request Latency | `kserve_vllm:e2e_request_latency_seconds` | Total request duration (p50/p95/p99) |
+| Inter-Token Latency (ITL) | `kserve_vllm:inter_token_latency_seconds` | Time between consecutive tokens (p50/p95/p99) |
+| Prefill / Decode / Queue Time | `kserve_vllm:request_prefill_time_seconds`, `request_decode_time_seconds`, `request_queue_time_seconds` | Breakdown of where time is spent |
+| Inference Time | `kserve_vllm:request_inference_time_seconds` | Pure model inference time |
+| Token Throughput | `kserve_vllm:generation_tokens_total`, `prompt_tokens_total` | Tokens per second (generation and prompt) |
+| Scheduler State | `kserve_vllm:num_requests_running`, `num_requests_waiting` | Requests currently being processed or queued |
+| Request Rate | `kserve_vllm:request_success_total` | Requests/s by finish reason (stop, length, abort, error) |
+| KV Cache Utilization | `kserve_vllm:kv_cache_usage_perc`, `kserve_inference_pool_average_kv_cache_utilization` | GPU KV cache usage (per-pod and pool average) |
+| Inference Pool | `kserve_inference_pool_ready_pods`, `kserve_inference_pool_average_queue_size` | Pool-level health |
+| Prefix Cache Hit Rate | `kserve_vllm:prefix_cache_hits_total` / `prefix_cache_queries_total` | Effectiveness of prefix caching |
+| Preemptions | `kserve_vllm:num_preemptions_total` | Number of KV cache preemptions (indicates memory pressure) |
+
+The dashboard includes a `model_name` variable dropdown that auto-populates from Prometheus.
+
+### Setting Up Grafana from Scratch
+
+If you don't have a Grafana instance yet:
+
+```bash
+# 1. Create namespace and install Grafana operator
+oc new-project user-grafana
+
+# Install Grafana Operator v5 from OperatorHub (community-operators)
+# or via CLI:
+cat <<EOF | oc apply -f -
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: grafana-operator
+  namespace: user-grafana
+spec:
+  channel: v5
+  name: grafana-operator
+  source: community-operators
+  sourceNamespace: openshift-marketplace
+EOF
+
+# 2. Create ServiceAccount with monitoring access
+oc create sa grafana-sa -n user-grafana
+oc adm policy add-cluster-role-to-user cluster-monitoring-view -z grafana-sa -n user-grafana
+
+# Create a long-lived token for the SA
+cat <<EOF | oc apply -f -
+apiVersion: v1
+kind: Secret
+metadata:
+  name: grafana-sa-token
+  namespace: user-grafana
+  annotations:
+    kubernetes.io/service-account.name: grafana-sa
+type: kubernetes.io/service-account-token
+EOF
+
+# 3. Create Grafana instance
+cat <<EOF | oc apply -f -
+apiVersion: grafana.integreatly.org/v1beta1
+kind: Grafana
+metadata:
+  name: grafana
+  namespace: user-grafana
+  labels:
+    dashboards: grafana
+spec:
+  route:
+    spec: {}
+  config:
+    auth:
+      disable_signout_menu: "true"
+    auth.anonymous:
+      enabled: "true"
+    log:
+      mode: console
+EOF
+
+# 4. Create Prometheus datasource
+SA_TOKEN=$(oc get secret grafana-sa-token -n user-grafana -o jsonpath='{.data.token}' | base64 -d)
+cat <<EOF | oc apply -f -
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDatasource
+metadata:
+  name: prometheus-grafanadatasource
+  namespace: user-grafana
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: grafana
+  datasource:
+    name: Prometheus
+    type: prometheus
+    access: proxy
+    isDefault: true
+    url: https://thanos-querier.openshift-monitoring.svc.cluster.local:9091
+    editable: true
+    jsonData:
+      httpHeaderName1: Authorization
+      timeInterval: 5s
+      tlsSkipVerify: true
+    secureJsonData:
+      httpHeaderValue1: "Bearer ${SA_TOKEN}"
+EOF
+
+# 5. Deploy the llm-d dashboard
+oc apply -f grafana/llm-d-dashboard.yaml
+
+# 6. Get the Grafana URL
+oc get route grafana-route -n user-grafana -o jsonpath='{.spec.host}'
+```
+
 ## Key Resources Reference
 
 | Resource | Namespace | Managed By |
