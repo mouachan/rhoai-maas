@@ -1,0 +1,19 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: maas-gateway-envoy
+  namespace: openshift-ingress
+  labels:
+    app.kubernetes.io/part-of: maas-observability
+spec:
+  selector:
+    matchLabels:
+      gateway.networking.k8s.io/gateway-name: maas-default-gateway
+  podMetricsEndpoints:
+  - port: metrics
+    path: /stats/prometheus
+    interval: 30s
+    metricRelabelings:
+    - action: keep
+      sourceLabels: [__name__]
+      regex: "istio_requests_total|istio_request_duration_milliseconds_.*|kuadrant_.*"

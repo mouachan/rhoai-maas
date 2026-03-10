@@ -11,5 +11,6 @@ spec:
   metrics:
     default:
       labels:
-        userid: auth.identity.userid
+        user: auth.identity.userid
         tier: auth.metadata.matchedTier.tier
+        model: responseBodyJSON("/model")

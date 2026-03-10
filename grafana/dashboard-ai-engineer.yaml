@@ -1,0 +1,188 @@
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: ai-engineer-dashboard
+  namespace: user-grafana
+  labels:
+    app: grafana
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: grafana
+  folder: "RHOAI MaaS Dashboard"
+  json: |
+    {
+      "annotations": {
+        "list": [
+          {"builtIn": 1, "datasource": {"type": "grafana", "uid": "-- Grafana --"}, "enable": true, "hide": true, "iconColor": "rgba(0, 211, 255, 1)", "name": "Annotations & Alerts", "type": "dashboard"}
+        ]
+      },
+      "editable": true,
+      "fiscalYearStartMonth": 0,
+      "graphTooltip": 0,
+      "id": null,
+      "links": [],
+      "panels": [
+        {"collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0}, "id": 100, "panels": [], "title": "📊 My Usage Summary", "type": "row"},
+        {
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}, "unit": "short"}, "overrides": []},
+          "gridPos": {"h": 5, "w": 4, "x": 0, "y": 1},
+          "id": 1,
+          "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+          "pluginVersion": "11.3.0",
+          "targets": [{"expr": "sum(increase(kserve_vllm:request_prompt_tokens_sum[$__range])) + sum(increase(kserve_vllm:request_generation_tokens_sum[$__range]))", "instant": true, "refId": "A"}],
+          "description": "Total tokens (prompt + completion) processed by models in the selected time range. Platform-wide (per-user requires Limitador). Source: vLLM metrics.",
+          "title": "📊 Total Tokens",
+          "type": "stat"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "blue", "value": null}]}, "unit": "short"}, "overrides": []},
+          "gridPos": {"h": 5, "w": 4, "x": 4, "y": 1},
+          "id": 11,
+          "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+          "pluginVersion": "11.3.0",
+          "targets": [{"expr": "sum(increase(kserve_vllm:e2e_request_latency_seconds_count[$__range]))", "instant": true, "refId": "A"}],
+          "description": "Total inference requests in the selected time range. Source: vLLM metrics.",
+          "title": "📊 Total Requests",
+          "type": "stat"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}, "unit": "ops"}, "overrides": []},
+          "gridPos": {"h": 5, "w": 4, "x": 8, "y": 1},
+          "id": 2,
+          "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+          "pluginVersion": "11.3.0",
+          "targets": [{"expr": "sum(rate(kserve_vllm:request_prompt_tokens_sum[5m])) + sum(rate(kserve_vllm:request_generation_tokens_sum[5m]))", "instant": true, "refId": "A"}],
+          "description": "Current token throughput (tokens/s) averaged over 5 minutes. Platform-wide (per-user requires Limitador). Source: vLLM metrics.",
+          "title": "⚡ Token Rate",
+          "type": "stat"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "blue", "value": null}]}, "unit": "reqps"}, "overrides": []},
+          "gridPos": {"h": 5, "w": 4, "x": 12, "y": 1},
+          "id": 12,
+          "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+          "pluginVersion": "11.3.0",
+          "targets": [{"expr": "sum(rate(kserve_vllm:e2e_request_latency_seconds_count[5m]))", "instant": true, "refId": "A"}],
+          "description": "Current request rate (req/s) averaged over 5 minutes. Source: vLLM metrics.",
+          "title": "⚡ Request Rate",
+          "type": "stat"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.1}, {"color": "red", "value": 0.3}]}, "unit": "percentunit"}, "overrides": []},
+          "gridPos": {"h": 5, "w": 4, "x": 16, "y": 1},
+          "id": 3,
+          "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+          "pluginVersion": "11.3.0",
+          "targets": [{"expr": "vector(0)", "instant": true, "refId": "A"}],
+          "description": "Percentage of requests rejected by rate limiting. Currently unavailable (Limitador not active).",
+          "title": "🚦 Rate Limit Ratio",
+          "type": "stat"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "yellow", "value": 0.9}, {"color": "green", "value": 0.95}]}, "unit": "percentunit"}, "overrides": []},
+          "gridPos": {"h": 5, "w": 4, "x": 20, "y": 1},
+          "id": 8,
+          "options": {"orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "showThresholdLabels": false, "showThresholdMarkers": true, "text": {}},
+          "pluginVersion": "11.3.0",
+          "targets": [{"expr": "((sum(rate(kserve_vllm:request_success_total[5m])) / sum(rate(kserve_vllm:e2e_request_latency_seconds_count[5m]))) >= 0) OR vector(1)", "instant": true, "refId": "A"}],
+          "description": "Model inference success rate: percentage of requests that reached the model and completed successfully. This is a platform-wide health indicator (vLLM metrics do not carry per-user labels).",
+          "title": "✅ Inference Success Rate",
+          "type": "gauge"
+        },
+        {"collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 6}, "id": 101, "panels": [], "title": "📈 Usage Trends", "type": "row"},
+        {
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisLabel": "Requests", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none", "hideFrom": {"tooltip": false, "viz": false, "legend": false}, "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 5, "scaleDistribution": {"type": "linear"}, "showPoints": "never", "spanNulls": false}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}, "unit": "short"}, "overrides": []},
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 7},
+          "id": 4,
+          "options": {"legend": {"calcs": ["lastNotNull", "mean", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+          "pluginVersion": "11.3.0",
+          "targets": [{"expr": "sum by (model_name) (rate(kserve_vllm:request_prompt_tokens_sum[5m])) + sum by (model_name) (rate(kserve_vllm:request_generation_tokens_sum[5m]))", "legendFormat": "{{model_name}}", "refId": "A"}],
+          "description": "Token throughput by model. Platform-wide (per-user requires Limitador). Source: vLLM metrics.",
+          "title": "📈 Token Rate by Model",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisLabel": "Requests per Second", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none", "hideFrom": {"tooltip": false, "viz": false, "legend": false}, "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 5, "scaleDistribution": {"type": "linear"}, "showPoints": "never", "spanNulls": false}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}, "unit": "ops"}, "overrides": [{"matcher": {"id": "byName", "options": "Rate Limited"}, "properties": [{"id": "color", "value": {"fixedColor": "red", "mode": "fixed"}}]}]},
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 7},
+          "id": 5,
+          "options": {"legend": {"calcs": ["lastNotNull", "mean", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+          "pluginVersion": "11.3.0",
+          "targets": [{"expr": "sum(rate(kserve_vllm:request_prompt_tokens_sum[5m])) + sum(rate(kserve_vllm:request_generation_tokens_sum[5m]))", "legendFormat": "Tokens/s", "refId": "A"}, {"expr": "vector(0)", "legendFormat": "Rate Limited (429)", "refId": "B"}],
+          "description": "Token throughput vs rate-limited requests over time. Source: vLLM metrics.",
+          "title": "📊 Usage Trends (Tokens vs Rate Limits)",
+          "type": "timeseries"
+        },
+        {"collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 15}, "id": 102, "panels": [], "title": "⏰ Hourly Usage Patterns", "type": "row"},
+        {
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisLabel": "Tokens", "axisPlacement": "auto", "barAlignment": 0, "barWidthFactor": 0.8, "drawStyle": "bars", "fillOpacity": 80, "gradientMode": "hue", "hideFrom": {"tooltip": false, "viz": false, "legend": false}, "lineInterpolation": "linear", "lineWidth": 1, "pointSize": 5, "scaleDistribution": {"type": "linear"}, "showPoints": "never", "spanNulls": false, "stacking": {"group": "A", "mode": "normal"}}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}, "unit": "short"}, "overrides": []},
+          "gridPos": {"h": 8, "w": 24, "x": 0, "y": 16},
+          "id": 9,
+          "options": {"legend": {"calcs": ["sum", "mean"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+          "pluginVersion": "11.3.0",
+          "targets": [{"expr": "sum by (model_name) (increase(kserve_vllm:request_prompt_tokens_sum[1h])) + sum by (model_name) (increase(kserve_vllm:request_generation_tokens_sum[1h]))", "legendFormat": "{{model_name}}", "refId": "A"}],
+          "title": "⏰ Hourly Token Usage by Model",
+          "type": "timeseries"
+        },
+        {"collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 24}, "id": 103, "panels": [], "title": "🔍 Detailed Analysis", "type": "row"},
+        {
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisLabel": "Total Tokens", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "bars", "fillOpacity": 80, "gradientMode": "none", "hideFrom": {"tooltip": false, "viz": false, "legend": false}, "lineInterpolation": "linear", "lineWidth": 1, "pointSize": 5, "scaleDistribution": {"type": "linear"}, "showPoints": "never", "spanNulls": false}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}, "unit": "short"}, "overrides": []},
+          "gridPos": {"h": 8, "w": 24, "x": 0, "y": 25},
+          "id": 6,
+          "options": {"legend": {"calcs": ["lastNotNull", "sum"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+          "pluginVersion": "11.3.0",
+          "targets": [{"expr": "sum by (model_name) (increase(kserve_vllm:request_prompt_tokens_sum[$__range])) + sum by (model_name) (increase(kserve_vllm:request_generation_tokens_sum[$__range]))", "legendFormat": "{{model_name}}", "refId": "A"}],
+          "title": "📊 Token Volume by Model (Selected Range)",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none", "hideFrom": {"tooltip": false, "viz": false, "legend": false}, "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 5, "scaleDistribution": {"type": "linear"}, "showPoints": "never", "spanNulls": false}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}]}, "unit": "short"}, "overrides": []},
+          "gridPos": {"h": 8, "w": 24, "x": 0, "y": 33},
+          "id": 10,
+          "options": {"legend": {"calcs": ["lastNotNull", "sum"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+          "pluginVersion": "11.3.0",
+          "targets": [{"expr": "vector(0)", "legendFormat": "Rate Limited (429)", "refId": "A"}],
+          "title": "❌ Rate Limited Requests (Selected Range)",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "fieldConfig": {"defaults": {"custom": {"align": "auto", "cellOptions": {"type": "auto"}, "inspect": false}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}, "unit": "short"}, "overrides": [{"matcher": {"id": "byName", "options": "model"}, "properties": [{"id": "displayName", "value": "🤖 Model"}]}, {"matcher": {"id": "byName", "options": "tier"}, "properties": [{"id": "displayName", "value": "🏷️ Tier"}]}, {"matcher": {"id": "byName", "options": "Value"}, "properties": [{"id": "displayName", "value": "📊 Hits"}]}]},
+          "gridPos": {"h": 6, "w": 24, "x": 0, "y": 41},
+          "id": 7,
+          "options": {"cellHeight": "sm", "footer": {"countRows": false, "fields": "", "reducer": ["sum"], "show": true}, "showHeader": true, "sortBy": [{"desc": true, "displayName": "📊 Hits"}]},
+          "pluginVersion": "11.3.0",
+          "targets": [{"expr": "sum by (model_name) (increase(kserve_vllm:request_prompt_tokens_sum[$__range])) + sum by (model_name) (increase(kserve_vllm:request_generation_tokens_sum[$__range]))", "format": "table", "instant": true, "refId": "A"}],
+          "title": "🔍 Usage Summary by Model",
+          "type": "table"
+        }
+      ],
+      "refresh": "30s",
+      "schemaVersion": 40,
+      "tags": ["maas", "ai-engineer", "observability"],
+      "templating": {
+        "list": [
+          {"current": {"selected": true, "text": "prometheus", "value": "prometheus"}, "hide": 0, "includeAll": false, "label": "Datasource", "name": "datasource", "options": [], "query": "prometheus", "refresh": 1, "type": "datasource"},
+          {"allValue": ".*", "current": {"selected": true, "text": "All", "value": "$__all"}, "datasource": {"type": "prometheus", "uid": "${datasource}"}, "definition": "label_values(kserve_vllm:request_prompt_tokens_sum, model_name)", "hide": 0, "includeAll": true, "label": "Model", "multi": false, "name": "model", "options": [], "query": {"query": "label_values(kserve_vllm:request_prompt_tokens_sum, model_name)", "refId": "StandardVariableQuery"}, "refresh": 1, "regex": "", "skipUrlSync": false, "sort": 1, "type": "query"}
+        ]
+      },
+      "time": {"from": "now-1h", "to": "now"},
+      "timepicker": {},
+      "timezone": "",
+      "title": "🔷 AI Engineer Dashboard",
+      "uid": "ai-engineer",
+      "version": 1,
+      "weekStart": ""
+    }
+

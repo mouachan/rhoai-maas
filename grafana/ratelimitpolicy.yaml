@@ -1,0 +1,31 @@
+apiVersion: kuadrant.io/v1
+kind: RateLimitPolicy
+metadata:
+  name: maas-tier-rate-limits
+  namespace: openshift-ingress
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: maas-default-gateway
+  defaults:
+    strategy: merge
+    limits:
+      free-tier:
+        rates:
+        - limit: 5
+          window: 1m
+        when:
+        - predicate: auth.metadata.matchedTier.tier == "free"
+      premium-tier:
+        rates:
+        - limit: 60
+          window: 1m
+        when:
+        - predicate: auth.metadata.matchedTier.tier == "premium"
+      enterprise-tier:
+        rates:
+        - limit: 600
+          window: 1m
+        when:
+        - predicate: auth.metadata.matchedTier.tier == "enterprise"

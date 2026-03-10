@@ -1,0 +1,87 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: maas-demo
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: maas-demo
+  namespace: maas-demo
+  labels:
+    app: maas-demo
+    app.kubernetes.io/part-of: maas-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: maas-demo
+  template:
+    metadata:
+      labels:
+        app: maas-demo
+    spec:
+      containers:
+      - name: demo
+        image: quay.io/mouachan/maas/maas-demo:latest
+        ports:
+        - containerPort: 7860
+          protocol: TCP
+        env:
+        - name: MAAS_GATEWAY_URL
+          value: "REPLACE_GATEWAY_URL"
+        - name: GRAFANA_URL
+          value: "REPLACE_GRAFANA_URL"
+        - name: MODEL_PATH
+          value: "llm/redhataillama-4-scout-17b-16e-instruct-quantizedw4a16"
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 7860
+          initialDelaySeconds: 5
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 7860
+          initialDelaySeconds: 3
+          periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: maas-demo
+  namespace: maas-demo
+  labels:
+    app: maas-demo
+spec:
+  selector:
+    app: maas-demo
+  ports:
+  - port: 7860
+    targetPort: 7860
+    protocol: TCP
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: maas-demo
+  namespace: maas-demo
+  labels:
+    app: maas-demo
+spec:
+  to:
+    kind: Service
+    name: maas-demo
+  port:
+    targetPort: 7860
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
