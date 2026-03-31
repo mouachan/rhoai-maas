@@ -16,16 +16,22 @@ spec:
         - limit: 5
           window: 1m
         when:
-        - predicate: auth.metadata.matchedTier.tier == "free"
+        - predicate: auth.identity.tier == "free"
+        counters:
+          - expression: auth.identity.userid
       premium-tier:
         rates:
         - limit: 60
           window: 1m
         when:
-        - predicate: auth.metadata.matchedTier.tier == "premium"
+        - predicate: auth.identity.tier == "premium"
+        counters:
+          - expression: auth.identity.userid
       enterprise-tier:
         rates:
         - limit: 600
           window: 1m
         when:
-        - predicate: auth.metadata.matchedTier.tier == "enterprise"
+        - predicate: auth.identity.tier == "enterprise"
+        counters:
+          - expression: auth.identity.userid

@@ -233,7 +233,44 @@ oc create clusterrolebinding maas-dashboard-gateway-reader \
   --serviceaccount=redhat-ods-applications:rhods-dashboard
 ```
 
-### Step 6: Create the model namespace and deploy the model
+### Step 6: Enable TLS on Authorino (required for rate limiting)
+
+Rate limiting requires TLS between the Gateway (Envoy) and Authorino. Without TLS, Authorino's gRPC response carries no dynamic metadata, causing the wasm-shim to log "No descriptors to rate limit" and silently skip rate limiting.
+
+```bash
+# 1. Annotate the Authorino service to generate a serving certificate
+oc annotate service authorino-authorino-authorization \
+  -n redhat-ods-applications \
+  service.beta.openshift.io/serving-cert-secret-name=authorino-server-cert
+
+# 2. Enable TLS on the Authorino CR
+oc patch authorino authorino -n redhat-ods-applications --type='merge' -p '{
+  "spec": {
+    "listener": {
+      "tls": {
+        "enabled": true,
+        "certSecretRef": {
+          "name": "authorino-server-cert"
+        }
+      }
+    }
+  }
+}'
+
+# 3. Annotate the Gateway for ODH TLS bootstrap
+# This annotation triggers automatic creation of the EnvoyFilter
+# that configures TLS between the gateway and Authorino
+oc annotate gateway maas-default-gateway -n openshift-ingress \
+  security.opendatahub.io/authorino-tls-bootstrap=true
+
+# 4. Verify Authorino restarts and is ready
+oc rollout status deployment/authorino-authorino-authorization \
+  -n redhat-ods-applications
+```
+
+> **Critical**: All three steps are required. Enabling TLS on Authorino without the Gateway annotation will cause 500 errors because the gateway still tries to connect via plain HTTP.
+
+### Step 7: Create the model namespace and deploy the model
 
 ```bash
 oc create namespace llm
@@ -248,7 +285,7 @@ oc create namespace llm
 
 Or apply the LLMInferenceService YAML directly (see the Helm chart template for the full spec).
 
-### Step 7: Verify the tiers annotation
+### Step 8: Verify the tiers annotation
 
 After deploying from the UI, the tiers annotation may be empty. Verify and fix:
 
@@ -264,7 +301,7 @@ oc annotate llminferenceservice -n llm \
   --overwrite
 ```
 
-### Step 8: Restart the dashboard pods
+### Step 9: Restart the dashboard pods
 
 After all configuration changes, restart the dashboard to pick up the Gateway hostname:
 
@@ -305,7 +342,9 @@ Controls the number of LLM tokens consumed per 24h per user within each tier. Th
 oc apply -f grafana/tokenratelimitpolicy.yaml
 ```
 
-Both policies target the `maas-default-gateway` and use `auth.metadata.matchedTier.tier` predicates to match users to their tier. Token limits use `auth.identity.userid` as a per-user counter.
+Both policies target the `maas-default-gateway` and use `auth.identity.tier` predicates to match users to their tier. Rate limits use `auth.identity.userid` as a per-user counter to enforce limits individually per user within each tier.
+
+> **Important**: The predicates must use `auth.identity.tier` (from the AuthPolicy response filter), **not** `auth.metadata.matchedTier.tier` (the raw metadata path). The wasm-shim reads tier from `filter_state` which maps to `auth.identity.*`.
 
 ### User and Tier Setup
 
@@ -324,6 +363,44 @@ curl -sk "https://maas.${CLUSTER_DOMAIN}/maas-api/v1/tiers/lookup" \
   -H "Authorization: Bearer $OCP_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"groups": ["tier-premium-users"]}'
+```
+
+### Validating Rate Limiting
+
+After deploying the rate limiting policies and enabling Authorino TLS, verify that rate limiting is enforced:
+
+```bash
+# Get a MaaS token for a free-tier user
+OCP_TOKEN=<free-tier-user-token>
+GATEWAY_HOST=$(oc get gateway maas-default-gateway -n openshift-ingress \
+  -o jsonpath='{.spec.listeners[0].hostname}')
+
+MAAS_TOKEN=$(curl -sk "https://${GATEWAY_HOST}/maas-api/v1/tokens" \
+  -H "Authorization: Bearer $OCP_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{}' | jq -r '.token')
+
+# Send requests in a loop — free tier allows 5 req/min
+for i in $(seq 1 8); do
+  HTTP_CODE=$(curl -sk -o /dev/null -w "%{http_code}" \
+    "https://${GATEWAY_HOST}/llm/redhataillama-4-scout-17b-16e-instruct-quantizedw4a16/v1/chat/completions" \
+    -H "Authorization: Bearer $MAAS_TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"model":"redhataillama-4-scout-17b-16e-instruct-quantizedw4a16","messages":[{"role":"user","content":"Hi"}],"max_tokens":5}')
+  echo "Request $i: HTTP $HTTP_CODE"
+done
+```
+
+Expected output for a free-tier user (5 req/min limit):
+```
+Request 1: HTTP 200
+Request 2: HTTP 200
+Request 3: HTTP 200
+Request 4: HTTP 200
+Request 5: HTTP 200
+Request 6: HTTP 429
+Request 7: HTTP 429
+Request 8: HTTP 429
 ```
 
 ## Demo Application
@@ -479,15 +556,13 @@ User-facing consumption metrics:
 | `istio-telemetry.yaml` | Istio telemetry for tracing |
 | `telemetry-policy.yaml` | Kuadrant TelemetryPolicy for per-user metric labels (user, tier, model) |
 
-### Known Limitation: Per-User Metrics
+### Per-User Metrics
 
-The `TelemetryPolicy` configures Limitador to add `user`, `tier`, and `model` labels to rate limit metrics (`authorized_hits`, `limited_calls`). However, in RHOAI 3.3, **the Kuadrant wasm plugin does not forward requests to Limitador** (`failureMode: allow` silently skips rate limiting). As a result:
+The `TelemetryPolicy` configures Limitador to add `user`, `tier`, and `model` labels to rate limit metrics (`authorized_hits`, `limited_calls`). With TLS enabled on Authorino (see Step 6 in Manual Setup), the wasm-shim correctly reads tier metadata from filter state and forwards rate limit descriptors to Limitador.
 
-- Per-user token tracking is **not available** in Prometheus
-- The dashboards use `kserve_vllm:*` metrics (per-model granularity) as a workaround
-- Rate limiting panels show `vector(0)` (no data) since Limitador is not called
-
-This is a known Kuadrant platform limitation that will be resolved in future releases.
+- Per-user metrics (`authorized_hits`, `limited_calls`) are available in Prometheus when TLS is properly configured
+- Rate limiting is enforced: users exceeding their tier limits receive HTTP 429 responses
+- The `counters` field with `auth.identity.userid` ensures limits are applied per user, not globally per tier
 
 ### Prerequisites
 
@@ -650,6 +725,8 @@ rhoai-maas/
 | LLMInferenceService | llm | Helm chart / manual |
 | `maas-gateway-wildcard-tls` (Secret) | openshift-ingress | Helm chart / manual |
 | `maas-gateway-reader` (ClusterRole) | cluster-scoped | Helm chart / manual |
+| `authorino` (Authorino CR) | redhat-ods-applications | ModelsAsService operator |
+| `authorino-server-cert` (Secret) | redhat-ods-applications | OpenShift serving cert (auto-generated) |
 
 ## Troubleshooting
 
@@ -746,6 +823,6 @@ aws ec2 start-instances --instance-ids <instance-id-1> <instance-id-2> --region 
 
 5. **BFF MaaS URL prefix mismatch** ([RHOAIENG-37237](https://issues.redhat.com/browse/RHOAIENG-37237)) — The BFF calls `/v1/tokens` instead of `/maas-api/v1/tokens` when using autodiscovery.
 
-6. **Limitador not called by wasm plugin** — The Kuadrant wasm plugin has `failureMode: allow` and never sends gRPC requests to Limitador. Rate limiting is silently bypassed. Per-user metrics (`authorized_hits`, `limited_calls`) are not populated. The `RateLimitPolicy` and `TokenRateLimitPolicy` show "Accepted/Enforced" but have no effect.
+6. **Limitador not called without Authorino TLS** — Without TLS enabled on Authorino and the `security.opendatahub.io/authorino-tls-bootstrap=true` annotation on the Gateway, the wasm-shim receives empty filter state metadata and logs "No descriptors to rate limit". **Fix**: Enable TLS on Authorino and annotate the Gateway (see Step 6 in Manual Setup).
 
 7. **Tier limits not displayed in dashboard UI** — The RHOAI Tiers page shows "No token limits / No request limits" even when `RateLimitPolicy` and `TokenRateLimitPolicy` are deployed and enforced. The dashboard does not read Kuadrant CRDs directly.

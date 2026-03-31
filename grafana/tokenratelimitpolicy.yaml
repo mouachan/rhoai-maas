@@ -16,7 +16,7 @@ spec:
           - limit: 10000
             window: 24h
         when:
-          - predicate: auth.metadata.matchedTier.tier == "free"
+          - predicate: auth.identity.tier == "free"
         counters:
           - expression: auth.identity.userid
       premium-tier-tokens:
@@ -24,7 +24,7 @@ spec:
           - limit: 100000
             window: 24h
         when:
-          - predicate: auth.metadata.matchedTier.tier == "premium"
+          - predicate: auth.identity.tier == "premium"
         counters:
           - expression: auth.identity.userid
       enterprise-tier-tokens:
@@ -32,6 +32,6 @@ spec:
           - limit: 1000000
             window: 24h
         when:
-          - predicate: auth.metadata.matchedTier.tier == "enterprise"
+          - predicate: auth.identity.tier == "enterprise"
         counters:
           - expression: auth.identity.userid
