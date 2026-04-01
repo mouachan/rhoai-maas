@@ -12,5 +12,5 @@ spec:
     default:
       labels:
         user: auth.identity.userid
-        tier: auth.metadata.matchedTier.tier
+        tier: auth.identity.tier
         model: responseBodyJSON("/model")

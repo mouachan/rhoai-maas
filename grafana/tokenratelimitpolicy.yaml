@@ -1,37 +1,65 @@
 apiVersion: kuadrant.io/v1alpha1
 kind: TokenRateLimitPolicy
 metadata:
-  name: maas-tier-token-limits
+  name: tier-free-token-rate-limits
   namespace: openshift-ingress
+  labels:
+    opendatahub.io/dashboard: "true"
 spec:
   targetRef:
     group: gateway.networking.k8s.io
     kind: Gateway
     name: maas-default-gateway
-  defaults:
-    strategy: merge
-    limits:
-      free-tier-tokens:
-        rates:
-          - limit: 10000
-            window: 24h
-        when:
-          - predicate: auth.identity.tier == "free"
-        counters:
-          - expression: auth.identity.userid
-      premium-tier-tokens:
-        rates:
-          - limit: 100000
-            window: 24h
-        when:
-          - predicate: auth.identity.tier == "premium"
-        counters:
-          - expression: auth.identity.userid
-      enterprise-tier-tokens:
-        rates:
-          - limit: 1000000
-            window: 24h
-        when:
-          - predicate: auth.identity.tier == "enterprise"
-        counters:
-          - expression: auth.identity.userid
+  limits:
+    free-tokens:
+      rates:
+      - limit: 500
+        window: 1m0s
+      when:
+      - predicate: auth.identity.tier == "free" && !request.path.endsWith("/v1/models")
+      counters:
+      - expression: auth.identity.userid
+---
+apiVersion: kuadrant.io/v1alpha1
+kind: TokenRateLimitPolicy
+metadata:
+  name: tier-premium-token-rate-limits
+  namespace: openshift-ingress
+  labels:
+    opendatahub.io/dashboard: "true"
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: maas-default-gateway
+  limits:
+    premium-tokens:
+      rates:
+      - limit: 5000
+        window: 1m0s
+      when:
+      - predicate: auth.identity.tier == "premium" && !request.path.endsWith("/v1/models")
+      counters:
+      - expression: auth.identity.userid
+---
+apiVersion: kuadrant.io/v1alpha1
+kind: TokenRateLimitPolicy
+metadata:
+  name: tier-enterprise-token-rate-limits
+  namespace: openshift-ingress
+  labels:
+    opendatahub.io/dashboard: "true"
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: maas-default-gateway
+  limits:
+    enterprise-tokens:
+      rates:
+      - limit: 50000
+        window: 1m0s
+      when:
+      - predicate: auth.identity.tier == "enterprise" && !request.path.endsWith("/v1/models")
+      counters:
+      - expression: auth.identity.userid

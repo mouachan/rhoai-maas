@@ -3,27 +3,86 @@ kind: Namespace
 metadata:
   name: maas-demo
 ---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: maas-portal
+  namespace: maas-demo
+  annotations:
+    serviceaccounts.openshift.io/oauth-redirectreference.primary: '{"kind":"OAuthRedirectReference","apiVersion":"v1","reference":{"kind":"Route","name":"maas-portal"}}'
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: maas-portal-proxy-cookie
+  namespace: maas-demo
+type: Opaque
+stringData:
+  session_secret: "REPLACE_COOKIE_SECRET"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: maas-portal-reader
+rules:
+- apiGroups: ["kuadrant.io"]
+  resources: ["ratelimitpolicies", "tokenratelimitpolicies"]
+  verbs: ["get", "list"]
+- apiGroups: ["authentication.k8s.io"]
+  resources: ["tokenreviews"]
+  verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: maas-portal-reader
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: maas-portal-reader
+subjects:
+- kind: ServiceAccount
+  name: maas-portal
+  namespace: maas-demo
+---
+# Prometheus read access for usage dashboards
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: maas-portal-monitoring
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-monitoring-view
+subjects:
+- kind: ServiceAccount
+  name: maas-portal
+  namespace: maas-demo
+---
+# Backend Deployment — FastAPI API server
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: maas-demo
+  name: maas-portal-api
   namespace: maas-demo
   labels:
-    app: maas-demo
-    app.kubernetes.io/part-of: maas-demo
+    app: maas-portal-api
+    app.kubernetes.io/part-of: maas-portal
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: maas-demo
+      app: maas-portal-api
   template:
     metadata:
       labels:
-        app: maas-demo
+        app: maas-portal-api
     spec:
+      serviceAccountName: maas-portal
       containers:
-      - name: demo
-        image: quay.io/mouachan/maas/maas-demo:latest
+      - name: api
+        image: quay.io/mouachan/maas/maas-portal-api:v1
+        imagePullPolicy: Always
         ports:
         - containerPort: 7860
           protocol: TCP
@@ -32,8 +91,8 @@ spec:
           value: "REPLACE_GATEWAY_URL"
         - name: GRAFANA_URL
           value: "REPLACE_GRAFANA_URL"
-        - name: MODEL_PATH
-          value: "llm/redhataillama-4-scout-17b-16e-instruct-quantizedw4a16"
+        - name: RL_NAMESPACE
+          value: "openshift-ingress"
         resources:
           requests:
             cpu: 100m
@@ -43,45 +102,152 @@ spec:
             memory: 512Mi
         livenessProbe:
           httpGet:
-            path: /
+            path: /api/config
             port: 7860
+          initialDelaySeconds: 10
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /api/config
+            port: 7860
+          initialDelaySeconds: 5
+          periodSeconds: 10
+---
+# Backend Service — internal ClusterIP only
+apiVersion: v1
+kind: Service
+metadata:
+  name: maas-portal-api
+  namespace: maas-demo
+  labels:
+    app: maas-portal-api
+spec:
+  selector:
+    app: maas-portal-api
+  ports:
+  - port: 7860
+    targetPort: 7860
+    protocol: TCP
+    name: api
+---
+# Frontend Deployment — nginx + oauth-proxy
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: maas-portal-frontend
+  namespace: maas-demo
+  labels:
+    app: maas-portal-frontend
+    app.kubernetes.io/part-of: maas-portal
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: maas-portal-frontend
+  template:
+    metadata:
+      labels:
+        app: maas-portal-frontend
+    spec:
+      serviceAccountName: maas-portal
+      containers:
+      - name: nginx
+        image: quay.io/mouachan/maas/maas-portal-frontend:v1
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8080
+          protocol: TCP
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 128Mi
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 8080
           initialDelaySeconds: 5
           periodSeconds: 30
         readinessProbe:
           httpGet:
             path: /
-            port: 7860
+            port: 8080
           initialDelaySeconds: 3
           periodSeconds: 10
+      - name: oauth-proxy
+        image: quay.io/openshift/origin-oauth-proxy:latest
+        args:
+        - --https-address=:8443
+        - --provider=openshift
+        - --openshift-service-account=maas-portal
+        - --upstream=http://localhost:8080
+        - --tls-cert=/etc/tls/private/tls.crt
+        - --tls-key=/etc/tls/private/tls.key
+        - --cookie-secret-file=/etc/proxy/secrets/session_secret
+        - --pass-access-token=true
+        - --pass-user-headers=true
+        - --skip-provider-button=true
+        ports:
+        - containerPort: 8443
+          name: oauth-proxy
+          protocol: TCP
+        volumeMounts:
+        - name: proxy-tls
+          mountPath: /etc/tls/private
+          readOnly: true
+        - name: proxy-cookie
+          mountPath: /etc/proxy/secrets
+          readOnly: true
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 100m
+            memory: 128Mi
+      volumes:
+      - name: proxy-tls
+        secret:
+          secretName: maas-portal-tls
+      - name: proxy-cookie
+        secret:
+          secretName: maas-portal-proxy-cookie
 ---
+# Frontend Service — exposed via Route
 apiVersion: v1
 kind: Service
 metadata:
-  name: maas-demo
+  name: maas-portal-frontend
   namespace: maas-demo
   labels:
-    app: maas-demo
+    app: maas-portal-frontend
+  annotations:
+    service.alpha.openshift.io/serving-cert-secret-name: maas-portal-tls
 spec:
   selector:
-    app: maas-demo
+    app: maas-portal-frontend
   ports:
-  - port: 7860
-    targetPort: 7860
+  - port: 8443
+    targetPort: 8443
     protocol: TCP
+    name: oauth-proxy
 ---
+# Route — reencrypt TLS, points to frontend
 apiVersion: route.openshift.io/v1
 kind: Route
 metadata:
-  name: maas-demo
+  name: maas-portal
   namespace: maas-demo
   labels:
-    app: maas-demo
+    app: maas-portal
 spec:
   to:
     kind: Service
-    name: maas-demo
+    name: maas-portal-frontend
   port:
-    targetPort: 7860
+    targetPort: oauth-proxy
   tls:
-    termination: edge
+    termination: reencrypt
     insecureEdgeTerminationPolicy: Redirect

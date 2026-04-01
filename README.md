@@ -403,20 +403,93 @@ Request 7: HTTP 429
 Request 8: HTTP 429
 ```
 
-## Demo Application
+## Self-Service Portal
 
-An interactive demo app (Flask + vanilla JS) with SSE streaming for testing the MaaS platform.
+A full self-service portal for interacting with the MaaS platform, built as two separate Deployments on OpenShift: a React + PatternFly 6 frontend and a FastAPI backend.
+
+### Portal Architecture
+
+```
+              External Route (reencrypt TLS)
+                      |
+              +-------v-------+
+              |  oauth-proxy  |  Frontend Deployment
+              |  port 8443    |  (2 containers)
+              +-------+-------+
+                      | upstream :8080
+              +-------v-------+
+              |     nginx     |
+              |  port 8080    |
+              |               |
+              |  /*     -> React SPA (static files)
+              |  /api/* -> proxy_pass to backend Service
+              +-------+-------+
+                      | http://maas-portal-api:7860
+              +-------v-------+
+              |   FastAPI     |  Backend Deployment
+              |  port 7860    |  (1 container, ClusterIP only)
+              +---------------+
+```
+
+- **Frontend Deployment** (`maas-portal-frontend`): nginx serving the React build + OpenShift oauth-proxy sidecar for SSO
+- **Backend Deployment** (`maas-portal-api`): FastAPI API server (internal only, not exposed via Route)
+- nginx proxies all `/api/*` requests to the backend — no CORS needed, OAuth headers flow through
+- Only the frontend Route is exposed externally; the backend is reachable only within the cluster
 
 ### Features
 
-- Login with OpenShift token (two-step token exchange)
-- Real-time streaming chat with SSE (Server-Sent Events)
-- Per-session tracking: tokens, requests, latency (TTFT, TPOT)
-- Tier-aware rate limit display (color-coded by tier)
-- Rate limit alert on HTTP 429
-- Link to Grafana dashboards
+- **OpenShift SSO login** — automatic via oauth-proxy, with manual token fallback
+- **Dashboard** — KPI cards (models, API keys, requests, tokens), tier limits display, token breakdown pie chart, requests-by-model bar chart, per-user usage table
+- **Model browser** — list all available models from the MaaS API, copy endpoint URLs, navigate to Playground
+- **API Key management** — create, list, copy, and revoke API keys via the MaaS API (`/maas-api/v1/api-keys`)
+- **Playground** — real-time streaming chat (SSE) with dynamic model selector, per-session stats (requests, tokens, latency), rate limit progress bars, rate limit alerts
+- **Usage analytics** — real-time metrics from Prometheus (auto-refreshes every 30s), time range selector (1h/6h/24h/7d/30d), charts for requests and tokens over time, per-model breakdown with per-user detail, per-user per-model table
 
-### Deploy the Demo
+### Data Sources
+
+The portal uses a **hybrid data strategy**:
+
+| Data | Source | Details |
+|------|--------|---------|
+| Global metrics (requests, tokens, latency) | Prometheus (Thanos) | PromQL queries against `kserve_vllm:*` metrics |
+| Per-model breakdown (requests, prompt/completion tokens) | Prometheus (Thanos) | `sum by (model_name)` queries |
+| Rate limited count | Prometheus (Thanos) | `istio_request_duration_milliseconds_count{response_code="429"}` |
+| Time series (requests/tokens over time) | Prometheus (Thanos) | Range queries with `increase()` |
+| Per-user per-model breakdown | In-memory (backend) | Tracked after each chat completion via `_track_user()` |
+| Models list | MaaS API | `GET /maas-api/v1/models` |
+| API keys | MaaS API | `GET/POST/DELETE /maas-api/v1/api-keys` |
+| Tier limits | Kubernetes API | Reads `RateLimitPolicy` and `TokenRateLimitPolicy` CRDs |
+
+> **Note**: Per-user data is stored in-memory in the backend pod. It resets when the pod restarts. Prometheus metrics persist across restarts.
+
+### Backend API Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/auto-login` | OAuth auto-login (reads `X-Forwarded-Access-Token` from oauth-proxy) |
+| `POST` | `/api/login` | Manual token login fallback |
+| `GET` | `/api/models` | List available models (proxies to MaaS API) |
+| `GET` | `/api/keys` | List API keys (proxies to MaaS API) |
+| `POST` | `/api/keys` | Create an API key (proxies to MaaS API) |
+| `DELETE` | `/api/keys/{id}` | Revoke an API key (proxies to MaaS API) |
+| `GET` | `/api/tier-limits` | Return tier limits from Kuadrant CRDs |
+| `GET` | `/api/config` | Return Grafana URL, gateway URL |
+| `GET` | `/api/usage/stats?range=24h` | Aggregated usage stats (Prometheus + in-memory) |
+| `POST` | `/api/chat/stream` | SSE streaming chat (proxies to model inference endpoint) |
+| `GET` | `/api/docs` | Auto-generated OpenAPI documentation (FastAPI) |
+
+### Frontend Pages
+
+| Page | Route | Description |
+|------|-------|-------------|
+| Login | `/login` | OpenShift token input with auto-login via oauth-proxy |
+| Dashboard | `/` | Welcome card, KPI stats, tier limits, charts, per-user usage |
+| Models | `/models` | Table of available models with endpoint URLs and "Try in Playground" action |
+| API Keys | `/api-keys` | Create/list/revoke API keys with clipboard copy |
+| Playground | `/playground` | Chat interface with model selector, SSE streaming, session stats, rate limit bars |
+| Usage | `/usage` | Real-time Prometheus metrics with time range selector, charts, tables |
+
+### Deploy the Portal
 
 **Automated (recommended):**
 
@@ -425,11 +498,13 @@ cd demo
 ./deploy.sh
 ```
 
-To rebuild the container image before deploying:
+To rebuild the container images before deploying:
 
 ```bash
 ./deploy.sh --build
 ```
+
+The script automatically detects the cluster domain and configures the Gateway and Grafana URLs.
 
 **Manual:**
 
@@ -440,30 +515,92 @@ CLUSTER_DOMAIN=$(oc get ingresses.config.openshift.io cluster -o jsonpath='{.spe
 oc create namespace maas-demo
 sed -e "s|REPLACE_GATEWAY_URL|https://maas.${CLUSTER_DOMAIN}|g" \
     -e "s|REPLACE_GRAFANA_URL|https://grafana-route-user-grafana.${CLUSTER_DOMAIN}|g" \
+    -e "s|REPLACE_COOKIE_SECRET|$(openssl rand -hex 16)|g" \
     demo/openshift/deployment.yaml | oc apply -f -
 
-# Wait for deployment
-oc rollout status deployment/maas-demo -n maas-demo
+# Grant oauth-proxy auth delegation
+oc adm policy add-cluster-role-to-user system:auth-delegator \
+    system:serviceaccount:maas-demo:maas-portal
+
+# Wait for rollouts
+oc rollout status deployment/maas-portal-api -n maas-demo
+oc rollout status deployment/maas-portal-frontend -n maas-demo
 
 # Get the URL
-oc get route maas-demo -n maas-demo -o jsonpath='https://{.spec.host}'
+oc get route maas-portal -n maas-demo -o jsonpath='https://{.spec.host}'
 ```
 
 ### Build from Source
 
 ```bash
-cd demo
-podman build --platform linux/amd64 -t quay.io/mouachan/maas/maas-demo:latest .
-podman push quay.io/mouachan/maas/maas-demo:latest
+# Backend
+cd demo/backend
+podman build --platform linux/amd64 -t quay.io/mouachan/maas/maas-portal-api:v1 .
+podman push quay.io/mouachan/maas/maas-portal-api:v1
+
+# Frontend
+cd demo/frontend
+podman build --platform linux/amd64 -t quay.io/mouachan/maas/maas-portal-frontend:v1 .
+podman push quay.io/mouachan/maas/maas-portal-frontend:v1
 ```
 
-### Environment Variables
+### Local Development
+
+```bash
+# Start the backend (port 7860)
+cd demo/backend
+pip install -r requirements.txt
+MAAS_GATEWAY_URL=https://maas.apps.your-cluster.example.com uvicorn app:app --port 7860
+
+# Start the frontend (port 5173, proxies /api to backend)
+cd demo/frontend
+npm install
+npm run dev
+```
+
+The Vite dev server is pre-configured to proxy `/api/*` to `http://localhost:7860`.
+
+### Environment Variables (Backend)
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `MAAS_GATEWAY_URL` | (required) | MaaS gateway URL (e.g., `https://maas.apps.cluster-xxx...`) |
-| `GRAFANA_URL` | (optional) | Grafana dashboard URL for the sidebar link |
-| `MODEL_PATH` | `llm/redhataillama-4-scout-17b-16e-instruct-quantizedw4a16` | Model path for inference requests |
+| `GRAFANA_URL` | (optional) | Grafana dashboard URL |
+| `PROMETHEUS_URL` | `https://thanos-querier.openshift-monitoring.svc:9091` | Prometheus/Thanos querier URL |
+| `RL_NAMESPACE` | `openshift-ingress` | Namespace containing RateLimitPolicy CRDs |
+| `MODEL_NAMESPACE` | `llm` | Namespace where models are deployed |
+
+### OpenShift Resources (Portal)
+
+The `demo/openshift/deployment.yaml` manifest creates:
+
+| Resource | Name | Purpose |
+|----------|------|---------|
+| Namespace | `maas-demo` | Portal namespace |
+| ServiceAccount | `maas-portal` | OAuth redirect reference for SSO |
+| Secret | `maas-portal-proxy-cookie` | oauth-proxy session cookie secret |
+| ClusterRole | `maas-portal-reader` | Read Kuadrant CRDs + TokenReview |
+| ClusterRoleBinding | `maas-portal-reader` | Bind SA to role |
+| ClusterRoleBinding | `maas-portal-monitoring` | Bind SA to `cluster-monitoring-view` for Prometheus access |
+| Deployment | `maas-portal-api` | FastAPI backend (1 container, port 7860) |
+| Deployment | `maas-portal-frontend` | nginx + oauth-proxy (2 containers, ports 8080/8443) |
+| Service | `maas-portal-api` | ClusterIP, port 7860 (internal) |
+| Service | `maas-portal-frontend` | ClusterIP, port 8443 (exposed via Route) |
+| Route | `maas-portal` | Reencrypt TLS, points to frontend oauth-proxy |
+
+### Technology Stack (Portal)
+
+| Component | Technology |
+|-----------|-----------|
+| Frontend framework | React 18 + TypeScript 5 |
+| UI library | PatternFly 6 (Red Hat design system) |
+| Charts | Recharts 2 |
+| Build tool | Vite 6 |
+| Backend framework | FastAPI (Python 3.11, async) |
+| HTTP client | httpx (async) |
+| Web server | nginx 1.24 (UBI9) |
+| Authentication | OpenShift oauth-proxy |
+| Container images | UBI9 (Red Hat Universal Base Image) |
 
 ## Monitoring with Grafana
 
@@ -677,26 +814,62 @@ oc get route grafana-route -n user-grafana -o jsonpath='https://{.spec.host}'
 
 ```
 rhoai-maas/
-├── README.md                               # This file
-├── demo/                                   # Interactive demo application
-│   ├── app.py                              # Flask + SSE streaming app
-│   ├── Dockerfile                          # UBI9 Python 3.11 container image
-│   ├── requirements.txt                    # Python dependencies
-│   ├── deploy.sh                           # Automated deploy script
-│   └── openshift/
-│       └── deployment.yaml                 # Deployment + Service + Route
-├── grafana/                                # Monitoring & observability
-│   ├── llm-d-dashboard.yaml                # vLLM inference performance dashboard
-│   ├── dashboard-platform-admin.yaml       # Platform admin dashboard
-│   ├── dashboard-ai-engineer.yaml          # AI engineer dashboard
+├── README.md                                  # This file
+├── .gitignore
+│
+├── demo/                                      # Self-service portal
+│   ├── deploy.sh                              # Build + deploy script (frontend + backend)
+│   │
+│   ├── backend/                               # FastAPI API server
+│   │   ├── app.py                             # All API routes, Prometheus queries, chat SSE
+│   │   ├── requirements.txt                   # fastapi, uvicorn, httpx, pydantic
+│   │   └── Dockerfile                         # UBI9 Python 3.11
+│   │
+│   ├── frontend/                              # React + PatternFly 6 SPA
+│   │   ├── package.json                       # Dependencies and scripts
+│   │   ├── tsconfig.json                      # TypeScript config
+│   │   ├── vite.config.ts                     # Vite build config (dev proxy)
+│   │   ├── index.html                         # HTML entry point
+│   │   ├── nginx.conf                         # nginx: static files + /api/* reverse proxy
+│   │   ├── Dockerfile                         # Multi-stage: Node 20 build -> nginx 1.24
+│   │   ├── public/
+│   │   │   └── logo.jpeg                      # Portal logo
+│   │   └── src/
+│   │       ├── main.tsx                       # React entry point
+│   │       ├── App.tsx                        # Router + AuthProvider
+│   │       ├── AuthContext.tsx                # Auth state (React Context)
+│   │       ├── api.ts                         # Typed API client (fetch wrappers)
+│   │       ├── types.ts                       # TypeScript interfaces
+│   │       ├── components/
+│   │       │   ├── AppLayout.tsx              # Masthead + sidebar navigation
+│   │       │   ├── ChatMessage.tsx            # Chat bubble component
+│   │       │   └── TierBadge.tsx              # Colored tier label
+│   │       └── pages/
+│   │           ├── LoginPage.tsx              # OAuth auto-login + token fallback
+│   │           ├── Dashboard.tsx              # KPIs, charts, per-user usage
+│   │           ├── Models.tsx                 # Model browser table
+│   │           ├── ApiKeys.tsx                # API key CRUD + modals
+│   │           ├── Playground.tsx             # SSE streaming chat + stats sidebar
+│   │           └── Usage.tsx                  # Prometheus-powered analytics
+│   │
+│   ├── openshift/
+│   │   └── deployment.yaml                    # All K8s manifests (2 Deployments, RBAC, Route)
+│   │
+│   └── app.py                                 # (legacy) Original Flask demo app
+│
+├── grafana/                                   # Monitoring & observability
+│   ├── llm-d-dashboard.yaml                   # vLLM inference performance dashboard
+│   ├── dashboard-platform-admin.yaml          # Platform admin dashboard
+│   ├── dashboard-ai-engineer.yaml             # AI engineer dashboard
 │   ├── authorino-server-metrics-servicemonitor.yaml
 │   ├── limitador-servicemonitor.yaml
-│   ├── gateway-podmonitor.yaml             # Gateway Envoy metrics scraping
+│   ├── gateway-podmonitor.yaml                # Gateway Envoy metrics scraping
 │   ├── istio-telemetry.yaml
-│   ├── telemetry-policy.yaml               # Per-user metric labels
-│   ├── ratelimitpolicy.yaml                # Request rate limits per tier
-│   └── tokenratelimitpolicy.yaml           # Token rate limits per tier
-└── helm/rhoai-maas/                        # Helm chart for model deployment
+│   ├── telemetry-policy.yaml                  # Per-user metric labels (user, tier, model)
+│   ├── ratelimitpolicy.yaml                   # Request rate limits per tier
+│   └── tokenratelimitpolicy.yaml              # Token rate limits per tier
+│
+└── helm/rhoai-maas/                           # Helm chart for model deployment
     ├── Chart.yaml
     ├── values.yaml
     └── templates/
@@ -727,6 +900,11 @@ rhoai-maas/
 | `maas-gateway-reader` (ClusterRole) | cluster-scoped | Helm chart / manual |
 | `authorino` (Authorino CR) | redhat-ods-applications | ModelsAsService operator |
 | `authorino-server-cert` (Secret) | redhat-ods-applications | OpenShift serving cert (auto-generated) |
+| `maas-portal-api` (Deployment) | maas-demo | Portal / this repo |
+| `maas-portal-frontend` (Deployment) | maas-demo | Portal / this repo |
+| `maas-portal` (Route) | maas-demo | Portal / this repo |
+| `maas-portal` (ServiceAccount) | maas-demo | Portal / this repo |
+| `maas-portal-reader` (ClusterRole) | cluster-scoped | Portal / this repo |
 
 ## Troubleshooting
 
