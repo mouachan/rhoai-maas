@@ -2,6 +2,24 @@
 
 End-to-end deployment and configuration of Models-as-a-Service on Red Hat OpenShift AI 3.3 with Kuadrant-based authentication and tier-based access control.
 
+---
+
+## Table of Contents
+
+1. [How MaaS Works](#how-maas-works) — Architecture, token flow, AuthPolicy, tiers, autodiscovery
+2. [Prerequisites](#prerequisites)
+3. [Quick Start with Helm](#quick-start-with-helm)
+4. [Manual Step-by-Step Setup](#manual-step-by-step-setup) — 9 steps from DSC to model deployment
+5. [Rate Limiting](#rate-limiting) — Request & token limits per tier, user setup, validation
+6. [Self-Service Portal](#self-service-portal) — Architecture, RBAC, features, API, deployment
+7. [Monitoring with Grafana](#monitoring-with-grafana) — Metrics, dashboards, Grafana setup
+8. [Project Structure](#project-structure)
+9. [Key Resources Reference](#key-resources-reference)
+10. [Troubleshooting](#troubleshooting)
+11. [Known Issues (RHOAI 3.3)](#known-issues-rhoai-33)
+
+---
+
 ## How MaaS Works
 
 Models-as-a-Service (MaaS) is a Tech Preview feature in RHOAI 3.3 that provides governed, multi-tenant access to LLM inference endpoints. Instead of giving users direct access to model serving endpoints, MaaS introduces a gateway layer with authentication, authorization, and tier-based rate limiting.
