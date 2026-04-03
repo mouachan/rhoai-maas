@@ -1,0 +1,44 @@
+apiVersion: user.openshift.io/v1
+kind: Group
+metadata:
+  name: maas-portal-admins
+users:
+  - mouachani
+  - ptruong
+---
+apiVersion: user.openshift.io/v1
+kind: Group
+metadata:
+  name: maas-portal-users
+users:
+  - ptruong
+  - hkenniche
+  - atiouajni
+---
+apiVersion: user.openshift.io/v1
+kind: Group
+metadata:
+  name: tier-enterprise-users
+users:
+  - mouachani
+---
+apiVersion: user.openshift.io/v1
+kind: Group
+metadata:
+  name: tier-premium-users
+users:
+  - hkenniche
+---
+apiVersion: user.openshift.io/v1
+kind: Group
+metadata:
+  name: tier-free-users
+users:
+  - ptruong
+---
+apiVersion: user.openshift.io/v1
+kind: Group
+metadata:
+  name: tier-restricted-users
+users:
+  - atiouajni

@@ -59,6 +59,59 @@ subjects:
   name: maas-portal
   namespace: maas-demo
 ---
+# Role for ConfigMap access (subscriptions + catalog)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: maas-portal-configmaps
+  namespace: maas-demo
+rules:
+- apiGroups: [""]
+  resources: ["configmaps"]
+  resourceNames: ["maas-model-catalog"]
+  verbs: ["get", "update", "patch"]
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: maas-portal-configmaps
+  namespace: maas-demo
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: maas-portal-configmaps
+subjects:
+- kind: ServiceAccount
+  name: maas-portal
+  namespace: maas-demo
+---
+# Model catalog metadata
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: maas-model-catalog
+  namespace: maas-demo
+  labels:
+    app.kubernetes.io/part-of: maas-portal
+data:
+  catalog.json: |
+    {
+      "redhataillama-4-scout-17b-16e-instruct-quantizedw4a16": {
+        "display_name": "Llama 4 Scout 17B (W4A16)",
+        "description": "Meta Llama 4 Scout 17B with 16 experts, instruction-tuned and quantized to W4A16 for efficient inference. Ideal for general-purpose chat, summarization, and code generation tasks.",
+        "category": "chat",
+        "provider": "Red Hat AI / Meta",
+        "context_window": 131072,
+        "cost_per_1k_prompt_tokens": 0.01,
+        "cost_per_1k_completion_tokens": 0.03,
+        "tags": ["llama4", "quantized", "moe", "instruction-tuned"],
+        "documentation_url": "https://huggingface.co/RedHatAI/Llama-4-Scout-17B-16E-Instruct-quantized.w4a16"
+      }
+    }
+---
 # Backend Deployment — FastAPI API server
 apiVersion: apps/v1
 kind: Deployment
@@ -81,7 +134,7 @@ spec:
       serviceAccountName: maas-portal
       containers:
       - name: api
-        image: quay.io/mouachan/maas/maas-portal-api:v1
+        image: quay.io/mouachan/maas/maas-portal-api:v2
         imagePullPolicy: Always
         ports:
         - containerPort: 7860
@@ -93,6 +146,8 @@ spec:
           value: "REPLACE_GRAFANA_URL"
         - name: RL_NAMESPACE
           value: "openshift-ingress"
+        - name: PORTAL_NAMESPACE
+          value: "maas-demo"
         resources:
           requests:
             cpu: 100m
@@ -152,7 +207,7 @@ spec:
       serviceAccountName: maas-portal
       containers:
       - name: nginx
-        image: quay.io/mouachan/maas/maas-portal-frontend:v1
+        image: quay.io/mouachan/maas/maas-portal-frontend:v2
         imagePullPolicy: Always
         ports:
         - containerPort: 8080

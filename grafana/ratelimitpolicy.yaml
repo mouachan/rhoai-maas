@@ -10,15 +10,17 @@ spec:
     group: gateway.networking.k8s.io
     kind: Gateway
     name: maas-default-gateway
-  limits:
-    free-requests:
-      rates:
-      - limit: 5
-        window: 1m0s
-      when:
-      - predicate: auth.identity.tier == "free" && !request.path.endsWith("/v1/models")
-      counters:
-      - expression: auth.identity.userid
+  defaults:
+    strategy: merge
+    limits:
+      free-requests:
+        rates:
+        - limit: 5
+          window: 1m0s
+        when:
+        - predicate: auth.identity.tier == "free" && !request.path.endsWith("/v1/models")
+        counters:
+        - expression: auth.identity.userid
 ---
 apiVersion: kuadrant.io/v1
 kind: RateLimitPolicy
@@ -32,15 +34,17 @@ spec:
     group: gateway.networking.k8s.io
     kind: Gateway
     name: maas-default-gateway
-  limits:
-    premium-requests:
-      rates:
-      - limit: 60
-        window: 1m0s
-      when:
-      - predicate: auth.identity.tier == "premium" && !request.path.endsWith("/v1/models")
-      counters:
-      - expression: auth.identity.userid
+  defaults:
+    strategy: merge
+    limits:
+      premium-requests:
+        rates:
+        - limit: 60
+          window: 1m0s
+        when:
+        - predicate: auth.identity.tier == "premium" && !request.path.endsWith("/v1/models")
+        counters:
+        - expression: auth.identity.userid
 ---
 apiVersion: kuadrant.io/v1
 kind: RateLimitPolicy
@@ -54,12 +58,14 @@ spec:
     group: gateway.networking.k8s.io
     kind: Gateway
     name: maas-default-gateway
-  limits:
-    enterprise-requests:
-      rates:
-      - limit: 600
-        window: 1m0s
-      when:
-      - predicate: auth.identity.tier == "enterprise" && !request.path.endsWith("/v1/models")
-      counters:
-      - expression: auth.identity.userid
+  defaults:
+    strategy: merge
+    limits:
+      enterprise-requests:
+        rates:
+        - limit: 600
+          window: 1m0s
+        when:
+        - predicate: auth.identity.tier == "enterprise" && !request.path.endsWith("/v1/models")
+        counters:
+        - expression: auth.identity.userid

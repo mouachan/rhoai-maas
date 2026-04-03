@@ -1,4 +1,4 @@
-import type { Session, MaaSModel, ApiKey, AppConfig, UsageStats } from "./types";
+import type { Session, MaaSModel, EnrichedModel, ApiKey, AppConfig, UsageStats, ModelStatus, CostStats, SloMetrics } from "./types";
 
 async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
   const resp = await fetch(url, options);
@@ -33,11 +33,15 @@ export async function login(ocp_token: string): Promise<{
   });
 }
 
-export async function fetchModels(session: Session): Promise<MaaSModel[]> {
-  const data = await fetchJson<{ models?: MaaSModel[] }>("/api/models", {
+export async function fetchModels(session: Session): Promise<EnrichedModel[]> {
+  const data = await fetchJson<{ models?: EnrichedModel[] }>("/api/models", {
     headers: authHeaders(session),
   });
   return data.models || [];
+}
+
+export async function fetchModelStatus(modelId: string): Promise<ModelStatus> {
+  return fetchJson(`/api/models/${encodeURIComponent(modelId)}/status`);
 }
 
 export async function fetchKeys(session: Session): Promise<ApiKey[]> {
@@ -74,16 +78,43 @@ export async function fetchUsageStats(range: string = "24h"): Promise<UsageStats
   return fetchJson(`/api/usage/stats?range=${range}`);
 }
 
+export async function fetchAdminUsers(): Promise<{ users: { user: string; tier: string; requests: number; tokens: number; limits: Record<string, unknown> }[] }> {
+  return fetchJson("/api/admin/users");
+}
+
+export async function fetchAdminUserDetail(username: string): Promise<{ user: string; tier: string; requests: number; tokens: number; limits: Record<string, unknown> }> {
+  return fetchJson(`/api/admin/users/${encodeURIComponent(username)}`);
+}
+
+export async function fetchCostStats(range: string = "24h"): Promise<CostStats> {
+  return fetchJson(`/api/usage/costs?range=${range}`);
+}
+
+export async function fetchSloMetrics(range: string = "24h", model: string = ""): Promise<SloMetrics> {
+  const params = new URLSearchParams({ range });
+  if (model) params.set("model", model);
+  return fetchJson(`/api/usage/slo?${params}`);
+}
+
+export function getExportUrl(range: string = "24h"): string {
+  return `/api/usage/export?range=${range}`;
+}
+
 export async function* streamChat(
   session: Session,
   message: string,
   history: [string, string][],
-  model?: string
+  model?: string,
+  apiKey?: string
 ): AsyncGenerator<{ type: string; content?: string; session?: Session; meta?: string }> {
+  const payload: Record<string, unknown> = { session, message, history, model };
+  if (apiKey) {
+    payload.api_key = apiKey;
+  }
   const resp = await fetch("/api/chat/stream", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ session, message, history, model }),
+    body: JSON.stringify(payload),
   });
 
   if (!resp.ok) {

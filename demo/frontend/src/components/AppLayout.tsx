@@ -16,6 +16,7 @@ import {
   ToolbarItem,
   ToolbarGroup,
   Button,
+  Label,
 } from "@patternfly/react-core";
 import { UserIcon, PowerOffIcon } from "@patternfly/react-icons";
 import { useAuth } from "../AuthContext";
@@ -30,7 +31,7 @@ const NAV_ITEMS = [
 ];
 
 export function AppLayout({ children }: { children: React.ReactNode }) {
-  const { session, logout } = useAuth();
+  const { session, logout, isAdmin } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
@@ -43,11 +44,6 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
     >
       <MastheadMain>
         <MastheadBrand>
-          <img
-            src="/logo.jpeg"
-            alt="MaaS Portal"
-            style={{ height: 36, marginRight: 10, borderRadius: 6 }}
-          />
           <span style={{ color: "rgba(255,255,255,0.85)", fontSize: 14, fontWeight: 500, letterSpacing: 0.5 }}>
             Models as a Service
           </span>
@@ -65,6 +61,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                       <span style={{ color: "#fff", fontSize: 13, fontWeight: 500 }}>
                         {session.username}
                       </span>
+                      {isAdmin && <Label color="purple" isCompact>Admin</Label>}
                       <TierBadge tier={session.tier} />
                     </div>
                   </ToolbarItem>

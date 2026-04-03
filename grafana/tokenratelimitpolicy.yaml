@@ -10,15 +10,17 @@ spec:
     group: gateway.networking.k8s.io
     kind: Gateway
     name: maas-default-gateway
-  limits:
-    free-tokens:
-      rates:
-      - limit: 500
-        window: 1m0s
-      when:
-      - predicate: auth.identity.tier == "free" && !request.path.endsWith("/v1/models")
-      counters:
-      - expression: auth.identity.userid
+  defaults:
+    strategy: merge
+    limits:
+      free-tokens:
+        rates:
+        - limit: 500
+          window: 1m0s
+        when:
+        - predicate: auth.identity.tier == "free" && !request.path.endsWith("/v1/models")
+        counters:
+        - expression: auth.identity.userid
 ---
 apiVersion: kuadrant.io/v1alpha1
 kind: TokenRateLimitPolicy
@@ -32,15 +34,17 @@ spec:
     group: gateway.networking.k8s.io
     kind: Gateway
     name: maas-default-gateway
-  limits:
-    premium-tokens:
-      rates:
-      - limit: 5000
-        window: 1m0s
-      when:
-      - predicate: auth.identity.tier == "premium" && !request.path.endsWith("/v1/models")
-      counters:
-      - expression: auth.identity.userid
+  defaults:
+    strategy: merge
+    limits:
+      premium-tokens:
+        rates:
+        - limit: 5000
+          window: 1m0s
+        when:
+        - predicate: auth.identity.tier == "premium" && !request.path.endsWith("/v1/models")
+        counters:
+        - expression: auth.identity.userid
 ---
 apiVersion: kuadrant.io/v1alpha1
 kind: TokenRateLimitPolicy
@@ -54,12 +58,14 @@ spec:
     group: gateway.networking.k8s.io
     kind: Gateway
     name: maas-default-gateway
-  limits:
-    enterprise-tokens:
-      rates:
-      - limit: 50000
-        window: 1m0s
-      when:
-      - predicate: auth.identity.tier == "enterprise" && !request.path.endsWith("/v1/models")
-      counters:
-      - expression: auth.identity.userid
+  defaults:
+    strategy: merge
+    limits:
+      enterprise-tokens:
+        rates:
+        - limit: 50000
+          window: 1m0s
+        when:
+        - predicate: auth.identity.tier == "enterprise" && !request.path.endsWith("/v1/models")
+        counters:
+        - expression: auth.identity.userid

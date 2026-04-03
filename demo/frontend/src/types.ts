@@ -7,6 +7,7 @@ export interface Session {
   req_window: string;
   token_limit: number;
   token_window: string;
+  is_admin: boolean;
   prompt_tokens: number;
   completion_tokens: number;
   requests: number;
@@ -14,12 +15,39 @@ export interface Session {
   latencies: number[];
 }
 
+export interface ModelCatalogEntry {
+  display_name: string;
+  description: string;
+  category: string;
+  provider: string;
+  context_window: number;
+  cost_per_1k_prompt_tokens: number;
+  cost_per_1k_completion_tokens: number;
+  tags: string[];
+  documentation_url: string;
+}
+
+export interface ModelStatus {
+  latency_p50: number;
+  latency_p95: number;
+  latency_p99: number;
+  throughput_rps: number;
+  availability: "up" | "degraded" | "down";
+  error_rate: number;
+}
+
 export interface MaaSModel {
   id: string;
   name?: string;
   tiers?: string[];
   endpoint?: string;
+  catalog?: ModelCatalogEntry;
   [key: string]: unknown;
+}
+
+export interface EnrichedModel extends MaaSModel {
+  catalog?: ModelCatalogEntry;
+  status?: ModelStatus;
 }
 
 export interface ApiKey {
@@ -65,8 +93,44 @@ export interface UsageStats {
   requests_by_tier: { tier: string; requests: number }[];
   requests_by_user: {
     user: string;
+    tier?: string;
     requests: number;
     tokens: number;
     models: { model: string; requests: number; prompt_tokens: number; completion_tokens: number }[];
   }[];
 }
+
+export interface SloMetrics {
+  latency: { p50: number; p95: number; p99: number };
+  ttft: { p50: number; p95: number; p99: number };
+  tpot_p95: number;
+  throughput_rps: number;
+  error_rate: number;
+  // Admin-only fields (absent for non-admin)
+  token_throughput?: { prompt_tps: number; completion_tps: number; total_tps: number };
+  error_breakdown?: { reason: string; count: number }[];
+  queue_time_p95?: number;
+  running_requests?: number;
+  waiting_requests?: number;
+  kv_cache_pct?: number;
+  latency_over_time?: { date: string; p50: number; p95: number; p99: number }[];
+  ttft_over_time?: { date: string; ttft_p95: number }[];
+  throughput_over_time?: { date: string; rps: number }[];
+}
+
+export interface CostStats {
+  total_cost: number;
+  currency: string;
+  range: string;
+  cost_by_user: {
+    user: string;
+    tier: string;
+    total_tokens: number;
+    estimated_cost: number;
+    models: { model: string; total_tokens: number; estimated_cost: number }[];
+  }[];
+  cost_by_model: { model: string; total_tokens: number; estimated_cost: number }[];
+  cost_by_tier: { tier: string; estimated_cost: number }[];
+  cost_over_time: { date: string; estimated_cost: number }[];
+}
+

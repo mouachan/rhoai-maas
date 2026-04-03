@@ -11,6 +11,7 @@ import {
   GridItem,
   Spinner,
   Content,
+  Label,
 } from "@patternfly/react-core";
 import {
   BarChart,
@@ -27,23 +28,25 @@ import {
 } from "recharts";
 import { useAuth } from "../AuthContext";
 import { TierBadge } from "../components/TierBadge";
-import { fetchModels, fetchKeys, fetchUsageStats } from "../api";
-import type { UsageStats } from "../types";
+import { fetchModels, fetchKeys, fetchUsageStats, fetchCostStats } from "../api";
+import type { UsageStats, CostStats } from "../types";
 
 const COLORS = ["#4a5568", "#3498db", "#27ae60", "#f39c12", "#9b59b6", "#1abc9c"];
 
 export function Dashboard() {
-  const { session } = useAuth();
+  const { session, isAdmin } = useAuth();
   const navigate = useNavigate();
   const [modelCount, setModelCount] = useState<number | null>(null);
   const [keyCount, setKeyCount] = useState<number | null>(null);
   const [usage, setUsage] = useState<UsageStats | null>(null);
+  const [costs, setCosts] = useState<CostStats | null>(null);
 
   useEffect(() => {
     if (!session) return;
     fetchModels(session).then((m) => setModelCount(m.length)).catch(() => setModelCount(0));
     fetchKeys(session).then((k) => setKeyCount(k.length)).catch(() => setKeyCount(0));
     fetchUsageStats().then(setUsage).catch(() => {});
+    fetchCostStats("24h").then(setCosts).catch(() => {});
   }, [session]);
 
   if (!session) return null;
@@ -72,6 +75,11 @@ export function Dashboard() {
       ].filter((d) => d.value > 0)
     : [];
 
+  // For non-admin, extract personal stats from filtered requests_by_user
+  const myStats = !isAdmin && usage?.requests_by_user?.length
+    ? usage.requests_by_user[0]
+    : null;
+
   return (
     <PageSection>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
@@ -95,7 +103,7 @@ export function Dashboard() {
 
       {/* KPI Cards */}
       <Grid hasGutter>
-        <GridItem span={3}>
+        <GridItem span={2}>
           <Card isCompact>
             <CardBody style={kpiStyle}>
               <div style={{ ...kpiValue, color: "#4a5568" }}>
@@ -105,7 +113,7 @@ export function Dashboard() {
             </CardBody>
           </Card>
         </GridItem>
-        <GridItem span={3}>
+        <GridItem span={2}>
           <Card isCompact>
             <CardBody style={kpiStyle}>
               <div style={{ ...kpiValue, color: "#3498db" }}>
@@ -115,21 +123,45 @@ export function Dashboard() {
             </CardBody>
           </Card>
         </GridItem>
-        <GridItem span={3}>
+        <GridItem span={2}>
           <Card isCompact>
             <CardBody style={kpiStyle}>
-              <div style={{ ...kpiValue, color: "#27ae60" }}>{usage?.total_requests ?? 0}</div>
-              <div style={kpiLabel}>Total Requests</div>
+              <div style={{ ...kpiValue, color: "#27ae60" }}>
+                {isAdmin ? (usage?.total_requests ?? 0) : (myStats?.requests ?? 0)}
+              </div>
+              <div style={kpiLabel}>Requests</div>
             </CardBody>
           </Card>
         </GridItem>
-        <GridItem span={3}>
+        <GridItem span={2}>
           <Card isCompact>
             <CardBody style={kpiStyle}>
               <div style={{ ...kpiValue, color: "#f39c12" }}>
-                {usage?.total_tokens?.toLocaleString() ?? 0}
+                {isAdmin
+                  ? (usage?.total_tokens?.toLocaleString() ?? 0)
+                  : (myStats?.tokens?.toLocaleString() ?? 0)}
               </div>
-              <div style={kpiLabel}>Total Tokens</div>
+              <div style={kpiLabel}>Tokens</div>
+            </CardBody>
+          </Card>
+        </GridItem>
+        <GridItem span={2}>
+          <Card isCompact>
+            <CardBody style={kpiStyle}>
+              <div style={{ ...kpiValue, color: "#e74c3c" }}>
+                ${costs?.total_cost?.toFixed(2) ?? "0.00"}
+              </div>
+              <div style={kpiLabel}>Est. Cost (24h)</div>
+            </CardBody>
+          </Card>
+        </GridItem>
+        <GridItem span={2}>
+          <Card isCompact>
+            <CardBody style={kpiStyle}>
+              <div style={{ ...kpiValue, color: "#9b59b6" }}>
+                {usage?.avg_latency ?? 0}s
+              </div>
+              <div style={kpiLabel}>Avg Latency</div>
             </CardBody>
           </Card>
         </GridItem>
@@ -215,8 +247,8 @@ export function Dashboard() {
         </GridItem>
       </Grid>
 
-      {/* Per-user usage */}
-      {usage && usage.requests_by_user && usage.requests_by_user.length > 0 && (
+      {/* Per-user usage (admin only) */}
+      {isAdmin && usage && usage.requests_by_user && usage.requests_by_user.length > 0 && (
         <Card style={{ marginTop: 16 }}>
           <CardTitle>Usage by User</CardTitle>
           <CardBody style={{ padding: 0 }}>
@@ -224,14 +256,22 @@ export function Dashboard() {
               <thead>
                 <tr style={{ borderBottom: "2px solid #eee", textAlign: "left" }}>
                   <th style={{ padding: "8px 12px" }}>User</th>
+                  <th style={{ padding: "8px 12px" }}>Tier</th>
                   <th style={{ padding: "8px 12px" }}>Requests</th>
                   <th style={{ padding: "8px 12px" }}>Total Tokens</th>
                 </tr>
               </thead>
               <tbody>
                 {usage.requests_by_user.map((u) => (
-                  <tr key={u.user} style={{ borderBottom: "1px solid #f0f0f0" }}>
-                    <td style={{ padding: "6px 12px", fontWeight: 600 }}>{u.user}</td>
+                  <tr
+                    key={u.user}
+                    style={{ borderBottom: "1px solid #f0f0f0", cursor: "pointer" }}
+                    onClick={() => navigate(`/usage?user=${encodeURIComponent(u.user)}`)}
+                  >
+                    <td style={{ padding: "6px 12px", fontWeight: 600, color: "#0066cc" }}>{u.user}</td>
+                    <td style={{ padding: "6px 12px" }}>
+                      <Label isCompact>{u.tier || "-"}</Label>
+                    </td>
                     <td style={{ padding: "6px 12px" }}>{u.requests}</td>
                     <td style={{ padding: "6px 12px" }}>{u.tokens.toLocaleString()}</td>
                   </tr>

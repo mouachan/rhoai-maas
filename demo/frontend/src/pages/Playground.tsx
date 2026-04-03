@@ -18,7 +18,10 @@ import {
   ProgressMeasureLocation,
   Alert,
   Content,
+  ToggleGroup,
+  ToggleGroupItem,
 } from "@patternfly/react-core";
+import { KeyIcon } from "@patternfly/react-icons";
 import { useAuth } from "../AuthContext";
 import { fetchModels, streamChat } from "../api";
 import { ChatMessage } from "../components/ChatMessage";
@@ -43,6 +46,8 @@ export function Playground() {
   const [history, setHistory] = useState<[string, string][]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  const [authMode, setAuthMode] = useState<"token" | "apikey">("token");
+  const [apiKey, setApiKey] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -54,7 +59,7 @@ export function Playground() {
           setSelectedModel(m[0].id);
         }
       })
-      .catch(() => setModels([]));
+      .catch(() => []);
   }, [session]);
 
   useEffect(() => {
@@ -63,6 +68,7 @@ export function Playground() {
 
   const handleSend = async () => {
     if (!input.trim() || !session || sending) return;
+    if (authMode === "apikey" && !apiKey.trim()) return;
     const msg = input.trim();
     setInput("");
     setSending(true);
@@ -80,7 +86,7 @@ export function Playground() {
     let meta = "";
 
     try {
-      for await (const event of streamChat(session, msg, history, selectedModel || undefined)) {
+      for await (const event of streamChat(session, msg, history, selectedModel || undefined, authMode === "apikey" ? apiKey : undefined)) {
         if (event.type === "token") {
           fullText += event.content || "";
           setMessages((prev) => {
@@ -161,21 +167,52 @@ export function Playground() {
         Playground
       </Title>
 
-      {/* Model selector */}
-      <FormGroup label="Model" fieldId="model-select" style={{ marginBottom: 16, maxWidth: 500 }}>
-        <FormSelect
-          id="model-select"
-          value={selectedModel}
-          onChange={(_e, val) => setSelectedModel(val)}
-        >
-          {models.length === 0 && (
-            <FormSelectOption value="" label="Loading models..." />
-          )}
-          {models.map((m) => (
-            <FormSelectOption key={m.id} value={m.id} label={m.name || m.id} />
-          ))}
-        </FormSelect>
-      </FormGroup>
+      {/* Model selector + Auth mode */}
+      <div style={{ display: "flex", gap: 16, alignItems: "flex-end", marginBottom: 16, flexWrap: "wrap" }}>
+        <FormGroup label="Model" fieldId="model-select" style={{ minWidth: 300, flex: 1, maxWidth: 500 }}>
+          <FormSelect
+            id="model-select"
+            value={selectedModel}
+            onChange={(_e, val) => setSelectedModel(val)}
+          >
+            {models.length === 0 && (
+              <FormSelectOption value="" label="Loading models..." />
+            )}
+            {models.map((m) => (
+              <FormSelectOption key={m.id} value={m.id} label={m.catalog?.display_name || m.name || m.id} />
+            ))}
+          </FormSelect>
+        </FormGroup>
+        <FormGroup label="Authentication" fieldId="auth-mode">
+          <ToggleGroup aria-label="Auth mode">
+            <ToggleGroupItem
+              text="Session Token"
+              buttonId="token"
+              isSelected={authMode === "token"}
+              onChange={() => setAuthMode("token")}
+            />
+            <ToggleGroupItem
+              text="API Key"
+              buttonId="apikey"
+              isSelected={authMode === "apikey"}
+              onChange={() => setAuthMode("apikey")}
+              icon={<KeyIcon />}
+            />
+          </ToggleGroup>
+        </FormGroup>
+        {authMode === "apikey" && (
+          <FormGroup label="API Key" fieldId="api-key-input" style={{ minWidth: 300, flex: 1, maxWidth: 500 }}>
+            <TextInput
+              id="api-key-input"
+              type="password"
+              value={apiKey}
+              onChange={(_e, val) => setApiKey(val)}
+              placeholder="sk-oai-..."
+              aria-label="API Key"
+            />
+          </FormGroup>
+        )}
+      </div>
 
       <Grid hasGutter>
         {/* Chat area */}
@@ -223,7 +260,7 @@ export function Playground() {
                 <Button
                   variant="primary"
                   onClick={handleSend}
-                  isDisabled={sending || !input.trim()}
+                  isDisabled={sending || !input.trim() || (authMode === "apikey" && !apiKey.trim())}
                   isLoading={sending}
                 >
                   Send
@@ -245,12 +282,25 @@ export function Playground() {
             >
               <CardBody>
                 <Content component="small" style={{ color: "rgba(255,255,255,0.7)" }}>
-                  User
+                  {authMode === "apikey" ? "API Key" : "User"}
                 </Content>
                 <div style={{ fontSize: 20, fontWeight: 700, margin: "4px 0 12px" }}>
-                  {session.username}
+                  {authMode === "apikey" ? (apiKey ? `${apiKey.slice(0, 12)}...` : "No key set") : session.username}
                 </div>
-                <TierBadge tier={session.tier} />
+                {authMode === "token" && <TierBadge tier={session.tier} />}
+                {authMode === "apikey" && (
+                  <span style={{
+                    display: "inline-block",
+                    padding: "2px 10px",
+                    borderRadius: 12,
+                    fontSize: 11,
+                    fontWeight: 600,
+                    background: "rgba(52,152,219,0.2)",
+                    color: "#5dade2",
+                  }}>
+                    API Key Auth
+                  </span>
+                )}
               </CardBody>
             </Card>
 

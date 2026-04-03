@@ -21,3 +21,7 @@ Thumbs.db
 
 # Build artifacts
 *.log
+tsconfig.tsbuildinfo
+
+# Local deployment with real values
+deployment-local.yaml

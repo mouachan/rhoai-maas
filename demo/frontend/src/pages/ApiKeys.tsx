@@ -63,7 +63,10 @@ export function ApiKeys() {
     setLoading(true);
     setError(null);
     fetchKeys(session)
-      .then(setKeys)
+      .then((k) => {
+        setKeys(k);
+        setLoading(false);
+      })
       .catch((e) => {
         const msg = String(e);
         if (msg.includes("404") || msg.includes("405")) {
@@ -72,8 +75,8 @@ export function ApiKeys() {
           setError(msg);
         }
         setKeys([]);
-      })
-      .finally(() => setLoading(false));
+        setLoading(false);
+      });
   };
 
   useEffect(() => {

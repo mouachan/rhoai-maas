@@ -5,6 +5,7 @@ import { autoLogin, login as apiLogin } from "./api";
 interface AuthState {
   session: Session | null;
   isAuthenticated: boolean;
+  isAdmin: boolean;
   loading: boolean;
   error: string | null;
   login: (token: string) => Promise<void>;
@@ -61,6 +62,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       value={{
         session,
         isAuthenticated: !!session,
+        isAdmin: session?.is_admin ?? false,
         loading,
         error,
         login,
