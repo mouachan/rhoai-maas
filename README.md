@@ -330,13 +330,13 @@ oc apply -f grafana/ratelimitpolicy.yaml
 
 ### Token Rate Limits (TokenRateLimitPolicy)
 
-Controls the number of LLM tokens consumed per 24h per user within each tier. This uses the `kuadrant.io/v1alpha1` API:
+Controls the number of LLM tokens consumed per minute per user within each tier. This uses the `kuadrant.io/v1alpha1` API:
 
 | Tier | Limit |
 |------|-------|
-| Free | 10,000 tokens/24h |
-| Premium | 100,000 tokens/24h |
-| Enterprise | 1,000,000 tokens/24h |
+| Free | 500 tokens/min |
+| Premium | 5,000 tokens/min |
+| Enterprise | 50,000 tokens/min |
 
 ```bash
 oc apply -f grafana/tokenratelimitpolicy.yaml
@@ -348,14 +348,23 @@ Both policies target the `maas-default-gateway` and use `auth.identity.tier` pre
 
 ### User and Tier Setup
 
+The portal deployment includes `demo/openshift/groups.yaml` which creates all necessary groups. To manage groups manually:
+
 ```bash
 # Create tier groups
 oc adm groups new tier-free-users
 oc adm groups new tier-premium-users
 oc adm groups new tier-enterprise-users
 
+# Create portal RBAC groups
+oc adm groups new maas-portal-admins
+oc adm groups new maas-portal-users
+
 # Add users to tiers
 oc adm groups add-users tier-premium-users <username>
+
+# Add portal admins (see full dashboard, all users' usage, SLO metrics)
+oc adm groups add-users maas-portal-admins <username>
 
 # Verify tier for a user
 OCP_TOKEN=$(oc whoami -t)
@@ -405,7 +414,7 @@ Request 8: HTTP 429
 
 ## Self-Service Portal
 
-A full self-service portal for interacting with the MaaS platform, built as two separate Deployments on OpenShift: a React + PatternFly 6 frontend and a FastAPI backend.
+A full self-service portal for interacting with the MaaS platform, built as two separate Deployments on OpenShift: a React + PatternFly 6 frontend and a FastAPI backend. Includes RBAC-based admin/user views — admins see platform-wide data and all users' usage, while regular users see only their own data. Authentication is handled by OpenShift OAuth proxy, which injects `X-Forwarded-User` and `X-Forwarded-Groups` headers for role detection.
 
 ### Portal Architecture
 
@@ -439,11 +448,12 @@ A full self-service portal for interacting with the MaaS platform, built as two 
 ### Features
 
 - **OpenShift SSO login** — automatic via oauth-proxy, with manual token fallback
-- **Dashboard** — KPI cards (models, API keys, requests, tokens), tier limits display, token breakdown pie chart, requests-by-model bar chart, per-user usage table
-- **Model browser** — list all available models from the MaaS API, copy endpoint URLs, navigate to Playground
+- **RBAC admin/user** — admins (group `maas-portal-admins`) see platform-wide data and all users; regular users see only their own usage
+- **Dashboard** — KPI cards (requests, tokens, cost), tier limits display, per-model breakdown. Admins see per-user usage table.
+- **Model catalog** — card gallery of available models with real-time status (latency, throughput, availability), detail drawer, and "Try in Playground" action
 - **API Key management** — create, list, copy, and revoke API keys via the MaaS API (`/maas-api/v1/api-keys`)
 - **Playground** — real-time streaming chat (SSE) with dynamic model selector, per-session stats (requests, tokens, latency), rate limit progress bars, rate limit alerts
-- **Usage analytics** — real-time metrics from Prometheus (auto-refreshes every 30s), time range selector (1h/6h/24h/7d/30d), charts for requests and tokens over time, per-model breakdown with per-user detail, per-user per-model table
+- **Usage analytics** — real-time Prometheus metrics (auto-refreshes every 30s), time range selector (1h/6h/24h/7d/30d), charts for requests and tokens over time, per-model and per-user breakdown, cost estimates. Admins also get SLO metrics (latency percentiles, TTFT, throughput, error rate) with per-model filtering.
 
 ### Data Sources
 
@@ -453,41 +463,49 @@ The portal uses a **hybrid data strategy**:
 |------|--------|---------|
 | Global metrics (requests, tokens, latency) | Prometheus (Thanos) | PromQL queries against `kserve_vllm:*` metrics |
 | Per-model breakdown (requests, prompt/completion tokens) | Prometheus (Thanos) | `sum by (model_name)` queries |
+| Per-user breakdown (requests, tokens) | Prometheus (Thanos) | Limitador `authorized_calls` / `authorized_hits` metrics with `user` label |
 | Rate limited count | Prometheus (Thanos) | `istio_request_duration_milliseconds_count{response_code="429"}` |
 | Time series (requests/tokens over time) | Prometheus (Thanos) | Range queries with `increase()` |
-| Per-user per-model breakdown | In-memory (backend) | Tracked after each chat completion via `_track_user()` |
+| SLO metrics (latency, TTFT, throughput) | Prometheus (Thanos) | `histogram_quantile()` on `kserve_vllm:*` histograms |
+| Cost estimates | Prometheus + catalog | Token counts from Prometheus × cost-per-token from model catalog ConfigMap |
 | Models list | MaaS API | `GET /maas-api/v1/models` |
 | API keys | MaaS API | `GET/POST/DELETE /maas-api/v1/api-keys` |
-| Tier limits | Kubernetes API | Reads `RateLimitPolicy` and `TokenRateLimitPolicy` CRDs |
+| Tier limits | Kubernetes API | Reads `RateLimitPolicy` and `TokenRateLimitPolicy` CRDs (`spec.defaults.limits`) |
 
-> **Note**: Per-user data is stored in-memory in the backend pod. It resets when the pod restarts. Prometheus metrics persist across restarts.
+> **Note**: Per-user data comes from Limitador Prometheus metrics, which persist across pod restarts. Limitador user labels include a Kuadrant hash suffix (e.g., `mouachani-3dbcf850`) that the backend strips automatically for display.
 
 ### Backend API Endpoints
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `POST` | `/api/auto-login` | OAuth auto-login (reads `X-Forwarded-Access-Token` from oauth-proxy) |
-| `POST` | `/api/login` | Manual token login fallback |
-| `GET` | `/api/models` | List available models (proxies to MaaS API) |
-| `GET` | `/api/keys` | List API keys (proxies to MaaS API) |
-| `POST` | `/api/keys` | Create an API key (proxies to MaaS API) |
-| `DELETE` | `/api/keys/{id}` | Revoke an API key (proxies to MaaS API) |
-| `GET` | `/api/tier-limits` | Return tier limits from Kuadrant CRDs |
-| `GET` | `/api/config` | Return Grafana URL, gateway URL |
-| `GET` | `/api/usage/stats?range=24h` | Aggregated usage stats (Prometheus + in-memory) |
-| `POST` | `/api/chat/stream` | SSE streaming chat (proxies to model inference endpoint) |
-| `GET` | `/api/docs` | Auto-generated OpenAPI documentation (FastAPI) |
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `POST` | `/api/auto-login` | OAuth headers | Auto-login via forwarded OCP token |
+| `POST` | `/api/login` | Body token | Manual login with OCP token |
+| `GET` | `/api/models` | MaaS token | List available models with catalog + status |
+| `GET` | `/api/models/{id}/status` | — | Real-time model status from Prometheus |
+| `GET` | `/api/keys` | MaaS token | List user's API keys |
+| `POST` | `/api/keys` | MaaS token | Create a new API key |
+| `DELETE` | `/api/keys/{id}` | MaaS token | Delete an API key |
+| `GET` | `/api/config` | — | Portal configuration (gateway URL, Grafana URL) |
+| `GET` | `/api/tier-limits` | — | Return tier limits from Kuadrant CRDs |
+| `GET` | `/api/usage/stats` | OAuth headers | Usage statistics (filtered for non-admins) |
+| `GET` | `/api/usage/costs` | OAuth headers | Cost estimates (filtered for non-admins) |
+| `GET` | `/api/usage/slo` | OAuth headers | SLO metrics — admin only, supports `model` filter |
+| `GET` | `/api/usage/export` | OAuth headers | CSV export of usage data |
+| `GET` | `/api/admin/users` | Admin only | List all users with usage stats and tier |
+| `GET` | `/api/admin/users/{user}` | Admin only | User detail with tier and limits |
+| `POST` | `/api/chat/stream` | MaaS token | SSE streaming chat with LLM |
+| `GET` | `/api/docs` | — | Auto-generated OpenAPI documentation (FastAPI) |
 
 ### Frontend Pages
 
 | Page | Route | Description |
 |------|-------|-------------|
 | Login | `/login` | OpenShift token input with auto-login via oauth-proxy |
-| Dashboard | `/` | Welcome card, KPI stats, tier limits, charts, per-user usage |
-| Models | `/models` | Table of available models with endpoint URLs and "Try in Playground" action |
+| Dashboard | `/` | KPI cards, tier limits, charts. Admin: platform-wide stats + per-user table. User: personal stats only. |
+| Models | `/models` | Card gallery of LLMs with status indicators, detail drawer, and "Try in Playground" action |
 | API Keys | `/api-keys` | Create/list/revoke API keys with clipboard copy |
 | Playground | `/playground` | Chat interface with model selector, SSE streaming, session stats, rate limit bars |
-| Usage | `/usage` | Real-time Prometheus metrics with time range selector, charts, tables |
+| Usage | `/usage` | Prometheus metrics with time range selector (1h–30d). Tabs: Overview, Models, Users, Costs, SLO (admin only). Non-admins see only their own data. |
 
 ### Deploy the Portal
 
@@ -511,11 +529,16 @@ The script automatically detects the cluster domain and configures the Gateway a
 ```bash
 CLUSTER_DOMAIN=$(oc get ingresses.config.openshift.io cluster -o jsonpath='{.spec.domain}')
 
+# Create OpenShift groups (admin/user roles + tier assignments)
+oc apply -f demo/openshift/groups.yaml
+
 # Create namespace and deploy
 oc create namespace maas-demo
 sed -e "s|REPLACE_GATEWAY_URL|https://maas.${CLUSTER_DOMAIN}|g" \
     -e "s|REPLACE_GRAFANA_URL|https://grafana-route-user-grafana.${CLUSTER_DOMAIN}|g" \
     -e "s|REPLACE_COOKIE_SECRET|$(openssl rand -hex 16)|g" \
+    -e "s|quay.io/mouachan/maas/maas-portal-api:v2|${BACKEND_IMAGE:-quay.io/mouachan/maas/maas-portal-api:v2}|g" \
+    -e "s|quay.io/mouachan/maas/maas-portal-frontend:v2|${FRONTEND_IMAGE:-quay.io/mouachan/maas/maas-portal-frontend:v2}|g" \
     demo/openshift/deployment.yaml | oc apply -f -
 
 # Grant oauth-proxy auth delegation
@@ -535,13 +558,13 @@ oc get route maas-portal -n maas-demo -o jsonpath='https://{.spec.host}'
 ```bash
 # Backend
 cd demo/backend
-podman build --platform linux/amd64 -t quay.io/mouachan/maas/maas-portal-api:v1 .
-podman push quay.io/mouachan/maas/maas-portal-api:v1
+podman build --platform linux/amd64 -t quay.io/mouachan/maas/maas-portal-api:v2 .
+podman push quay.io/mouachan/maas/maas-portal-api:v2
 
 # Frontend
 cd demo/frontend
-podman build --platform linux/amd64 -t quay.io/mouachan/maas/maas-portal-frontend:v1 .
-podman push quay.io/mouachan/maas/maas-portal-frontend:v1
+podman build --platform linux/amd64 -t quay.io/mouachan/maas/maas-portal-frontend:v2 .
+podman push quay.io/mouachan/maas/maas-portal-frontend:v2
 ```
 
 ### Local Development
@@ -569,24 +592,29 @@ The Vite dev server is pre-configured to proxy `/api/*` to `http://localhost:786
 | `PROMETHEUS_URL` | `https://thanos-querier.openshift-monitoring.svc:9091` | Prometheus/Thanos querier URL |
 | `RL_NAMESPACE` | `openshift-ingress` | Namespace containing RateLimitPolicy CRDs |
 | `MODEL_NAMESPACE` | `llm` | Namespace where models are deployed |
+| `PORTAL_NAMESPACE` | `maas-demo` | Namespace where the portal is deployed |
+| `ADMIN_GROUP` | `maas-portal-admins` | OpenShift group granting admin role in the portal |
 
 ### OpenShift Resources (Portal)
 
-The `demo/openshift/deployment.yaml` manifest creates:
+The `demo/openshift/` manifests create:
 
-| Resource | Name | Purpose |
-|----------|------|---------|
-| Namespace | `maas-demo` | Portal namespace |
-| ServiceAccount | `maas-portal` | OAuth redirect reference for SSO |
-| Secret | `maas-portal-proxy-cookie` | oauth-proxy session cookie secret |
-| ClusterRole | `maas-portal-reader` | Read Kuadrant CRDs + TokenReview |
-| ClusterRoleBinding | `maas-portal-reader` | Bind SA to role |
-| ClusterRoleBinding | `maas-portal-monitoring` | Bind SA to `cluster-monitoring-view` for Prometheus access |
-| Deployment | `maas-portal-api` | FastAPI backend (1 container, port 7860) |
-| Deployment | `maas-portal-frontend` | nginx + oauth-proxy (2 containers, ports 8080/8443) |
-| Service | `maas-portal-api` | ClusterIP, port 7860 (internal) |
-| Service | `maas-portal-frontend` | ClusterIP, port 8443 (exposed via Route) |
-| Route | `maas-portal` | Reencrypt TLS, points to frontend oauth-proxy |
+| Resource | Name | Source | Purpose |
+|----------|------|--------|---------|
+| Group | `maas-portal-admins` | `groups.yaml` | Portal admin role (full dashboard, all users) |
+| Group | `maas-portal-users` | `groups.yaml` | Portal user role (own data only) |
+| Group | `tier-*-users` | `groups.yaml` | Tier assignments for Kuadrant rate limiting |
+| Namespace | `maas-demo` | `deployment.yaml` | Portal namespace |
+| ServiceAccount | `maas-portal` | `deployment.yaml` | OAuth redirect reference for SSO |
+| Secret | `maas-portal-proxy-cookie` | `deployment.yaml` | oauth-proxy session cookie secret |
+| ClusterRole | `maas-portal-reader` | `deployment.yaml` | Read Kuadrant CRDs + TokenReview |
+| ClusterRoleBinding | `maas-portal-reader` | `deployment.yaml` | Bind SA to role |
+| ClusterRoleBinding | `maas-portal-monitoring` | `deployment.yaml` | Bind SA to `cluster-monitoring-view` for Prometheus access |
+| Deployment | `maas-portal-api` | `deployment.yaml` | FastAPI backend (1 container, port 7860) |
+| Deployment | `maas-portal-frontend` | `deployment.yaml` | nginx + oauth-proxy (2 containers, ports 8080/8443) |
+| Service | `maas-portal-api` | `deployment.yaml` | ClusterIP, port 7860 (internal) |
+| Service | `maas-portal-frontend` | `deployment.yaml` | ClusterIP, port 8443 (exposed via Route) |
+| Route | `maas-portal` | `deployment.yaml` | Reencrypt TLS, points to frontend oauth-proxy |
 
 ### Technology Stack (Portal)
 
@@ -818,7 +846,8 @@ rhoai-maas/
 ├── .gitignore
 │
 ├── demo/                                      # Self-service portal
-│   ├── deploy.sh                              # Build + deploy script (frontend + backend)
+│   ├── README.md                              # Portal-specific documentation
+│   ├── deploy.sh                              # Automated deployment script (groups + manifests)
 │   │
 │   ├── backend/                               # FastAPI API server
 │   │   ├── app.py                             # All API routes, Prometheus queries, chat SSE
@@ -837,23 +866,26 @@ rhoai-maas/
 │   │   └── src/
 │   │       ├── main.tsx                       # React entry point
 │   │       ├── App.tsx                        # Router + AuthProvider
-│   │       ├── AuthContext.tsx                # Auth state (React Context)
+│   │       ├── AuthContext.tsx                # Auth state + isAdmin (React Context)
 │   │       ├── api.ts                         # Typed API client (fetch wrappers)
 │   │       ├── types.ts                       # TypeScript interfaces
 │   │       ├── components/
-│   │       │   ├── AppLayout.tsx              # Masthead + sidebar navigation
+│   │       │   ├── AppLayout.tsx              # Masthead + sidebar + admin badge
+│   │       │   ├── ModelCard.tsx              # Model card for catalog gallery
+│   │       │   ├── ModelDetailDrawer.tsx      # Model detail side drawer
 │   │       │   ├── ChatMessage.tsx            # Chat bubble component
 │   │       │   └── TierBadge.tsx              # Colored tier label
 │   │       └── pages/
 │   │           ├── LoginPage.tsx              # OAuth auto-login + token fallback
-│   │           ├── Dashboard.tsx              # KPIs, charts, per-user usage
-│   │           ├── Models.tsx                 # Model browser table
+│   │           ├── Dashboard.tsx              # KPIs, charts (admin: all users, user: own data)
+│   │           ├── Models.tsx                 # Model catalog card gallery
 │   │           ├── ApiKeys.tsx                # API key CRUD + modals
 │   │           ├── Playground.tsx             # SSE streaming chat + stats sidebar
-│   │           └── Usage.tsx                  # Prometheus-powered analytics
+│   │           └── Usage.tsx                  # Prometheus analytics (Overview/Models/Users/Costs/SLO)
 │   │
 │   ├── openshift/
-│   │   └── deployment.yaml                    # All K8s manifests (2 Deployments, RBAC, Route)
+│   │   ├── deployment.yaml                    # All K8s manifests (2 Deployments, RBAC, Route)
+│   │   └── groups.yaml                        # OpenShift groups (admin, user, tier assignments)
 │   │
 │   └── app.py                                 # (legacy) Original Flask demo app
 │

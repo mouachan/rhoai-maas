@@ -8,7 +8,7 @@ Web portal for Red Hat OpenShift AI Models-as-a-Service (MaaS). Provides model c
 ┌───────────────────────────────────────────────────────────────┐
 │  OpenShift Route (maas-portal)                                │
 │  ┌─────────────────────┐    ┌──────────────────────────────┐  │
-│  │ OAuth Proxy (4180)  │───►│ Frontend - nginx (8080)      │  │
+│  │ OAuth Proxy (8443)  │───►│ Frontend - nginx (8080)      │  │
 │  │ OpenShift SSO       │    │ React + PatternFly 6         │  │
 │  │ X-Forwarded-User    │    │ /api/* → backend proxy       │  │
 │  │ X-Forwarded-Groups  │    └──────────┬───────────────────┘  │
