@@ -50,7 +50,7 @@ Tier-based rate limiting is handled by Kuadrant at the gateway level:
 
 ## Prerequisites
 
-- OpenShift 4.17+ cluster with RHOAI 3.3 and Kuadrant 1.3+ configured
+- OpenShift 4.19+ cluster with RHOAI 3.3 and Kuadrant 1.3+ configured
 - LLM models deployed via `LLMInferenceService` in the `llm` namespace
 - Kuadrant gateway, AuthPolicy, and RateLimitPolicy resources in place
 - Prometheus (OpenShift monitoring stack) with Limitador and kserve/vLLM metrics

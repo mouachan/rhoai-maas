@@ -108,7 +108,7 @@ The RHOAI dashboard includes a `gen-ai-ui` container (BFF - Backend For Frontend
 
 ## Prerequisites
 
-- OpenShift 4.17+
+- OpenShift 4.19+
 - RHOAI 3.3 operator installed
 - Red Hat Connectivity Link (RHCL/Kuadrant) operator v1.3.0+ installed
 - Kuadrant CR created in `kuadrant-system` namespace
